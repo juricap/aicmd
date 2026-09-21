@@ -28,8 +28,9 @@ const std::vector<CommandInfo>& commands() {
         {Action::JobGet,"job_get","Read a job","read"},
         {Action::JobCancel,"job_cancel","Cancel tab work","session"},
         {Action::FileEdit,"file_edit","Request host editor launch","launch"},
-        {Action::FileView,"file_view","Read-only viewing (not yet available)","unsupported"},
+        {Action::FileView,"file_view","Request read-only viewer launch","launch"},
         {Action::SessionSave,"session_save","Request host persistence","host"},
+        {Action::SelectionPattern,"selection_pattern","Add, remove, or invert marks matching a wildcard mask","session"},
         {Action::AppQuit,"app_quit","Quit session","session"}
     };
     return items;
@@ -312,6 +313,19 @@ Result Core::execute(const Command& c) {
             if (!focusFound) return {{"not_found","Focused entry is missing"}};
             t->selection = c.selection; t->focus = c.focus; break;
         }
+        case Action::SelectionPattern: {
+            if (!t->snapshot || t->snapshot->id != c.snapshot) return {{"stale_snapshot","Selection snapshot has changed"}};
+            if (c.pattern.empty() || c.pattern.size() > 1024 || c.pattern.find('\0') != std::string::npos || c.value < -1 || c.value > 1) return {{"invalid_argument","Invalid selection pattern/mode"}};
+            auto selected = t->selection;
+            try {
+                for (const auto& e : t->snapshot->entries) {
+                    if ((e.directory && !c.flag) || !matches_pattern(e.name,c.pattern)) continue;
+                    if (c.value == -1 || (c.value == 0 && selected.count(e.name))) selected.erase(e.name);
+                    else selected.insert(e.name);
+                }
+            } catch (const std::exception&) { return {{"invalid_argument","Invalid selection pattern encoding"}}; }
+            t->selection = std::move(selected); break;
+        }
         case Action::ViewportSet: t->anchor = c.anchor; break;
         case Action::SortSet: case Action::FilterSet:
             t->options = c.options; if (c.action == Action::FilterSet) init_tree(*t);
@@ -322,10 +336,9 @@ Result Core::execute(const Command& c) {
                 kv.second.cancel->store(true); kv.second.load = Load::Unloaded;
             }
             break;
-        case Action::FileView: return {{"unsupported","Read-only jptxt launch is not available yet. F4 opens the editor."}};
-        case Action::FileEdit:
+        case Action::FileView: case Action::FileEdit:
             if (!t->snapshot || c.snapshot != t->snapshot->id) return {{"stale_snapshot","File listing changed"}};
-            for (const auto& e : t->snapshot->entries) if (e.name == c.path && !e.directory) { r.launchPath = t->path / e.name; return r; }
+            for (const auto& e : t->snapshot->entries) if (e.name == c.path && !e.directory) { r.launchPath = t->path / e.name; r.viewOnly = c.action == Action::FileView; return r; }
             return {{"not_found","Select a file to edit"}};
         default: return {{"unsupported","Command not implemented"}};
         }

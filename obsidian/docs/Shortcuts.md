@@ -21,4 +21,12 @@
 | Escape | Cancel navigation (or cancel path edit) |
 | Alt+F4 | Exit and save session |
 
-F3 is reserved for read-only viewing. F5–F8 are reserved for later file operations; they do not perform those operations yet.
+F3 opens jptxt read-only; F4 inside jptxt enables editing without restarting. F5–F8 are reserved for later file operations; they do not perform those operations yet.
+
+| Selection key | Action |
+|---|---|
+| Num+ / Num- | Select / unselect wildcard masks; semicolon separates masks |
+| Shift+Num+ / Shift+Num- | Select / unselect everything |
+| Num* | Invert all marks |
+
+Marks use red text; the name-cell dotted cursor moves independently. Masks support *, ?, and *.* including extensionless names.

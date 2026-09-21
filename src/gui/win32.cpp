@@ -39,6 +39,8 @@ struct App {
     ULONGLONG lastSave = 0;
     std::wstring notice;
     std::wstring renderedNotice;
+    std::wstring selectionMask = L"*";
+    bool selectionDirectories = true;
     int drag = -1;
     RECT divider{};
     int width = 1200, height = 760;
@@ -60,6 +62,44 @@ void render();
 void layout();
 void save();
 void run_command(Command c);
+void capture(int p);
+void project_marks(int p) {
+    const auto* t = current(p); auto& v = app->panes[p];
+    if (!t || !v.snapshot || t->snapshot != v.snapshot) return;
+    app->syncing = true;
+    ListView_SetItemState(v.list,0,0,LVIS_SELECTED);
+    for (size_t i = 0; i < v.snapshot->entries.size(); ++i) {
+        UINT wanted = t->selection.count(v.snapshot->entries[i].name) ? LVIS_SELECTED : 0;
+        if (ListView_GetItemState(v.list,static_cast<int>(i)+1,LVIS_SELECTED) != wanted) ListView_SetItemState(v.list,static_cast<int>(i)+1,wanted,LVIS_SELECTED);
+    }
+    app->syncing = false; v.selectionDirty = false; InvalidateRect(v.list,nullptr,FALSE);
+}
+INT_PTR CALLBACK selection_dialog(HWND h,UINT message,WPARAM w,LPARAM l) {
+    if (message == WM_INITDIALOG) {
+        SetWindowTextW(h,l < 0 ? L"Unselect files" : L"Select files");
+        SetDlgItemTextW(h,2002,app->selectionMask.c_str()); SendDlgItemMessageW(h,2002,EM_SETLIMITTEXT,256,0);
+        CheckDlgButton(h,2003,app->selectionDirectories ? BST_CHECKED : BST_UNCHECKED);
+        if (!app->smokePath.empty()) { SetDlgItemTextW(h,2002,L"*.md;*.txt"); PostMessageW(h,WM_COMMAND,IDOK,0); }
+        SendDlgItemMessageW(h,2002,EM_SETSEL,0,-1); return TRUE;
+    }
+    if (message == WM_COMMAND && (LOWORD(w) == IDOK || LOWORD(w) == IDCANCEL)) {
+        if (LOWORD(w) == IDOK) { wchar_t pattern[257]{}; GetDlgItemTextW(h,2002,pattern,257); if (!pattern[0]) return TRUE; app->selectionMask = pattern; app->selectionDirectories = IsDlgButtonChecked(h,2003) == BST_CHECKED; }
+        EndDialog(h,LOWORD(w)); return TRUE;
+    }
+    return FALSE;
+}
+void mark_pattern(int p,int mode,bool dialog) {
+    capture(p);
+    if (dialog) {
+        auto result = DialogBoxParamW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(2001),app->window,selection_dialog,mode);
+        SetFocus(app->panes[p].list);
+        if (result != IDOK) return;
+    }
+    auto t = current(p); if (!t || !t->snapshot) return;
+    Command c; c.action = Action::SelectionPattern; c.panel = p; c.tab = t->id; c.snapshot = t->snapshot->id;
+    c.value = mode; c.flag = dialog ? app->selectionDirectories : true; c.pattern = dialog ? fs::path(app->selectionMask).u8string() : "*";
+    run_command(c); project_marks(p);
+}
 void edit_path(int p) {
     auto& v = app->panes[p];
     v.editingPath = true;
@@ -95,8 +135,15 @@ std::wstring quote_arg(const std::wstring& s) {
     }
     out.append(slashes*2,L'\\'); out += L'\"'; return out;
 }
-void launch_editor(const fs::path& file) {
-    for (wchar_t c : file.native()) if (c < 32) { app->notice = L"jptxt cannot safely receive control characters in paths yet."; return; }
+bool editor_protocol2(const fs::path& executable) {
+    DWORD unused = 0, size = GetFileVersionInfoSizeW(executable.c_str(),&unused);
+    if (!size || size > 1024*1024) return false;
+    std::vector<unsigned char> data(size);
+    if (!GetFileVersionInfoW(executable.c_str(),0,size,data.data())) return false;
+    wchar_t* protocol = nullptr; UINT len = 0;
+    return VerQueryValueW(data.data(),L"\\StringFileInfo\\040904b0\\JptxtReadOnlyProtocol",reinterpret_cast<void**>(&protocol),&len) && len >= 2 && protocol && !wcscmp(protocol,L"2");
+}
+void launch_editor(const fs::path& file,bool viewOnly) {
     fs::path executable = app->editor;
     std::error_code ec;
     if (executable.empty()) {
@@ -108,18 +155,21 @@ void launch_editor(const fs::path& file) {
         if (executable.empty()) { wchar_t found[32768]{}; if (SearchPathW(nullptr,L"jptxt.exe",nullptr,32768,found,nullptr)) executable = found; }
     }
     if (executable.empty()) { app->notice = L"jptxt not found. Set AICMD_EDITOR or start with --editor <jptxt.exe>."; return; }
-    std::wstring args = quote_arg(executable.native())+L" "+quote_arg(file.native());
+    bool modern = editor_protocol2(executable);
+    if (viewOnly && !modern) { app->notice = L"F3 requires jptxt 0.2.0+ with read-only support. Configure the updated jptxt executable."; return; }
+    if (!modern) for (wchar_t c : file.native()) if (c < 32) { app->notice = L"This older jptxt cannot receive control characters in paths."; return; }
+    std::wstring args = quote_arg(executable.native())+(modern ? (viewOnly ? L" --readonly -- " : L" --edit -- ") : L" ")+quote_arg(file.native());
     STARTUPINFOW si{}; si.cb = sizeof(si); PROCESS_INFORMATION pi{};
     if (!CreateProcessW(executable.c_str(),args.data(),nullptr,nullptr,FALSE,0,nullptr,file.parent_path().c_str(),&si,&pi)) {
         app->notice = L"Cannot launch jptxt (Windows error " + std::to_wstring(GetLastError()) + L")."; return;
     }
     CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
-    app->notice = L"Opened in jptxt. Ctrl+R refreshes the listing.";
+    app->notice = viewOnly ? L"Opened read-only in jptxt. F4 there enables editing without restarting." : L"Opened in jptxt. Ctrl+R refreshes the listing.";
 }
 void run_command(Command c) {
     auto r = app->core.execute(c);
     if (r.error) app->notice = wide(r.error.message);
-    else { app->notice.clear(); if (!r.launchPath.empty()) launch_editor(r.launchPath); }
+    else { app->notice.clear(); if (!r.launchPath.empty()) launch_editor(r.launchPath,r.viewOnly); }
     if (r.save) save();
     if (app->core.state().quit) PostMessageW(app->window,WM_CLOSE,0,0);
     app->dirty = true;
@@ -177,7 +227,7 @@ void create_controls() {
         ShowWindow(v.path,SW_HIDE);
         v.summary = control(L"STATIC",L"",SS_LEFTNOWORDWRAP,base+3);
         v.list = control(WC_LISTVIEWW,L"Files",WS_TABSTOP|LVS_REPORT|LVS_OWNERDATA|LVS_SHOWSELALWAYS|LVS_SHAREIMAGELISTS,base+4);
-        ListView_SetExtendedListViewStyle(v.list,LVS_EX_FULLROWSELECT|LVS_EX_DOUBLEBUFFER|LVS_EX_LABELTIP);
+        ListView_SetExtendedListViewStyle(v.list,LVS_EX_DOUBLEBUFFER|LVS_EX_LABELTIP);
         SetWindowTheme(v.list,L"",L"");
         ListView_SetImageList(v.list,app->icons,LVSIL_SMALL);
         const wchar_t* names[] = {L"Name",L"Ext",L"Size",L"Date",L"Attr"}; int widths[] = {235,45,85,112,40};
@@ -188,7 +238,7 @@ void menu() {
     HMENU bar = CreateMenu();
     auto add = [](HMENU m,Action a,const wchar_t* label){AppendMenuW(m,MF_STRING,MENU_BASE+static_cast<UINT>(a),label);};
     HMENU file = CreatePopupMenu(); add(file,Action::FileEdit,L"&Edit in jptxt\tF4");
-    add(file,Action::FileView,L"Read-only &viewer (unavailable)\tF3"); EnableMenuItem(file,MENU_BASE+static_cast<UINT>(Action::FileView),MF_GRAYED);
+    add(file,Action::FileView,L"Read-only &viewer\tF3");
     AppendMenuW(file,MF_SEPARATOR,0,nullptr); add(file,Action::SessionSave,L"&Save session"); add(file,Action::AppQuit,L"E&xit");
     HMENU view = CreatePopupMenu(); add(view,Action::Refresh,L"&Refresh / Retry\tCtrl+R"); add(view,Action::FilterSet,L"Show &hidden files\tCtrl+H");
     HMENU tabs = CreatePopupMenu(); add(tabs,Action::TabCreate,L"&New tab\tCtrl+T"); add(tabs,Action::TabClose,L"&Close tab\tCtrl+W"); add(tabs,Action::TabCycle,L"Ne&xt tab\tCtrl+Tab");
@@ -282,7 +332,7 @@ void render() {
     const auto* t = current(app->core.state().activePanel);
     std::wstring status = app->notice;
     if (status.empty() && t && t->error) status = wide(t->error.message)+L"   |   Ctrl+R Retry";
-    if (status.empty()) status = L"F4 Edit     Tab Panel     Insert Mark     Ctrl+T New tab     Ctrl+W Close tab     Ctrl+L Path     Ctrl+R Refresh     Alt+F4 Exit";
+    if (status.empty()) status = L"F3 View   F4 Edit   Tab Panel   Insert Mark   Num+ Select   Num- Unselect   Ctrl+T New tab   Ctrl+L Path   Ctrl+R Refresh";
     SetWindowTextW(app->status,status.c_str());
     CheckMenuItem(GetMenu(app->window),MENU_BASE+static_cast<UINT>(Action::FilterSet),MF_BYCOMMAND|(t && t->options.hidden ? MF_CHECKED : MF_UNCHECKED));
     app->syncing = false; app->seen = app->core.state().revision; app->renderedNotice = app->notice;
@@ -325,9 +375,20 @@ LRESULT notify(NMHDR* hdr) {
                     int row = static_cast<int>(draw->nmcd.dwItemSpec);
                     bool focused = (ListView_GetItemState(v.list,row,LVIS_FOCUSED)&LVIS_FOCUSED) && p == app->core.state().activePanel;
                     bool marked = (ListView_GetItemState(v.list,row,LVIS_SELECTED)&LVIS_SELECTED) != 0;
-                    draw->clrTextBk = focused ? RGB(0,29,46) : GetSysColor(COLOR_WINDOW);
-                    draw->clrText = focused ? (marked ? RGB(255,200,120) : RGB(255,255,255)) : marked ? RGB(180,0,0) : GetSysColor(COLOR_WINDOWTEXT);
-                    return CDRF_NEWFONT;
+                    (void)focused;
+                    draw->nmcd.uItemState &= ~(CDIS_SELECTED|CDIS_FOCUS);
+                    draw->clrTextBk = GetSysColor(COLOR_WINDOW);
+                    draw->clrText = marked ? RGB(192,0,0) : GetSysColor(COLOR_WINDOWTEXT);
+                    return CDRF_NEWFONT|CDRF_NOTIFYPOSTPAINT;
+                }
+                if (draw->nmcd.dwDrawStage == CDDS_ITEMPOSTPAINT) {
+                    int row = static_cast<int>(draw->nmcd.dwItemSpec);
+                    if (p == app->core.state().activePanel && (ListView_GetItemState(v.list,row,LVIS_FOCUSED)&LVIS_FOCUSED)) {
+                        RECT label{}; ListView_GetItemRect(v.list,row,&label,LVIR_LABEL);
+                        label.right = std::min<LONG>(label.right,ListView_GetColumnWidth(v.list,0));
+                        DrawFocusRect(draw->nmcd.hdc,&label);
+                    }
+                    return CDRF_DODEFAULT;
                 }
             } else if (hdr->code == LVN_ODFINDITEMW) {
                 auto* find = reinterpret_cast<NMLVFINDITEMW*>(hdr);
@@ -402,7 +463,10 @@ bool key(MSG& msg,int testModifiers = -1) {
         ListView_SetItemState(v.list,next,LVIS_FOCUSED,LVIS_FOCUSED); ListView_EnsureVisible(v.list,next,FALSE);
         v.selectionDirty = true; InvalidateRect(v.list,nullptr,FALSE); return true;
     }
-    if (ctrl && msg.wParam == 'A' && focus == v.list) { ListView_SetItemState(v.list,-1,LVIS_SELECTED,LVIS_SELECTED); ListView_SetItemState(v.list,0,0,LVIS_SELECTED); v.selectionDirty = true; return true; }
+    if (ctrl && msg.wParam == 'A' && focus == v.list) { mark_pattern(p,1,false); return true; }
+    if (focus == v.list && msg.wParam == VK_ADD) { mark_pattern(p,1,!shift); return true; }
+    if (focus == v.list && msg.wParam == VK_SUBTRACT) { mark_pattern(p,-1,!shift); return true; }
+    if (focus == v.list && msg.wParam == VK_MULTIPLY) { mark_pattern(p,0,false); return true; }
     if (msg.wParam == VK_F4 && !alt) { action(Action::FileEdit,p); return true; }
     if (msg.wParam == VK_F3) { action(Action::FileView,p); return true; }
     if (msg.wParam == VK_ESCAPE) { if (focus == v.path) end_path(p); else action(Action::JobCancel,p); return true; }
@@ -423,7 +487,7 @@ void smoke() {
     if (app->smokePath.empty()) return;
     if (++app->smokeTicks > 600) { app->smokeFailed = true; PostMessageW(app->window,WM_CLOSE,0,0); return; }
     if (app->core.busy()) return;
-    auto check = [](bool okay) { if (!okay) app->smokeFailed = true; };
+    auto check = [](bool okay) { static int index = 0; ++index; if (!okay) { app->smokeFailed = true; std::ofstream log(app->smokePath.string()+".failures",std::ios::app); log << "stage " << app->smokeStage << " check " << index << '\n'; } };
     auto press = [](WPARAM code,int mods = 0) { MSG event{}; event.message = WM_KEYDOWN; event.wParam = code; key(event,mods); };
     if (app->smokeStage == 0) {
         check(ListView_GetItemCount(app->panes[0].list) > 0);
@@ -461,6 +525,12 @@ void smoke() {
         check(ListView_GetSelectedCount(list) == 1);
         check(ListView_GetNextItem(list,-1,LVNI_FOCUSED) == 3);
         capture(1); check(current(1)->selection.size() == 1);
+        press('A',1); check(current(1)->selection.size() == current(1)->snapshot->entries.size());
+        press(VK_SUBTRACT,2); check(current(1)->selection.empty());
+        press(VK_ADD); auto marked = current(1)->selection.size();
+        check(marked > 0 && marked < current(1)->snapshot->entries.size());
+        press(VK_MULTIPLY); check(current(1)->selection.size() == current(1)->snapshot->entries.size()-marked);
+        press(VK_SUBTRACT,2); check(current(1)->selection.empty());
         press('L',1); press(VK_ESCAPE); check(!app->panes[1].editingPath);
         save();
         auto persisted = load_state(app->statePath);

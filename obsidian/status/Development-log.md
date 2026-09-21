@@ -14,3 +14,9 @@
 - Initial local source checkpoint includes code, tests, scripts, dependency license, compact UI reference, and vault. Use `git log --oneline` for commit IDs.
 
 See [Status](Status.md) for verified results and [M1 todos](../todos/M1-Windows.md) for open work.
+
+## 2026-09-21: viewer and selection
+
+Published main to juricap/aicmd using id_ghjuricap. Added F3 protocol negotiation with sibling jptxt, red selection text, wildcard Num+/Num-, Num* and Ctrl+A. Fixed focus return from selection dialogs, found by native smoke. Windows and Linux shared core pass 54 checks. Documented image plugins and remote provider contracts.
+
+Sibling jptxt viewer implementation committed locally as 132e5df (not pushed). Actual aicmd F3 launch with a spaced filename passed; screenshot confirmed red marked text and an independent cursor. Reproduce with scripts/test-viewer.ps1.

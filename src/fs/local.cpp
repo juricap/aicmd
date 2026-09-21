@@ -18,6 +18,41 @@ std::string safe_text(std::string s) {
 std::string display_path(const fs::path& p) {
     try { return safe_text(p.u8string()); } catch (...) { return "[unrepresentable path]"; }
 }
+// Iterative glob matcher: '*' and '?' plus semicolon-separated masks. No regex backtracking.
+bool matches_pattern(const fs::path& name, const std::string& pattern) {
+    auto text = name.native();
+    auto next = [](const fs::path::string_type& s,size_t i) {
+        if (i >= s.size()) return i;
+#ifdef _WIN32
+        unsigned c = s[i++];
+        if (c >= 0xd800 && c <= 0xdbff && i < s.size() && unsigned(s[i]) >= 0xdc00 && unsigned(s[i]) <= 0xdfff) ++i;
+#else
+        ++i; while (i < s.size() && (static_cast<unsigned char>(s[i]) & 0xc0) == 0x80) ++i;
+#endif
+        return i;
+    };
+    auto lower = [](fs::path::value_type c) { return c >= 'A' && c <= 'Z' ? c+('a'-'A') : c; };
+    size_t begin = 0;
+    while (begin <= pattern.size()) {
+        auto end = pattern.find(';',begin); if (end == std::string::npos) end = pattern.size();
+        auto mask = fs::u8path(pattern.substr(begin,end-begin)).native();
+        if (mask == fs::path("*.*").native()) mask = fs::path("*").native();
+        size_t p = 0, t = 0, star = std::string::npos, retry = 0;
+        bool failed = false;
+        while (t < text.size()) {
+            if (p < mask.size() && mask[p] == '?') { ++p; t = next(text,t); }
+            else if (p < mask.size() && mask[p] == '*') { star = p++; retry = t; }
+            else if (p < mask.size() && lower(mask[p]) == lower(text[t])) { ++p; ++t; }
+            else if (star != std::string::npos && retry < text.size()) { p = star+1; retry = next(text,retry); t = retry; }
+            else { failed = true; break; }
+        }
+        while (p < mask.size() && mask[p] == '*') ++p;
+        if (!failed && !mask.empty() && p == mask.size()) return true;
+        if (end == pattern.size()) break;
+        begin = end+1;
+    }
+    return false;
+}
 fs::path absolute_path(const fs::path& p, const fs::path& base) {
     if (p.empty()) return base;
     // Root-relative and drive-relative Windows input must not inherit process CWD.

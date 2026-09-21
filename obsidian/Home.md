@@ -14,4 +14,6 @@ Working name: **aicmd**. C++17, small native binary, compact keyboard-first comm
 
 Build: `build.bat`. Run: `build\aicmd.exe`. Linux checks: `ssh ai`, work under `/data/devel/`; never WSL.
 
-Development is tracked in local Git on `main`. GitHub remote is pending the user's repository.
+Development is tracked at https://github.com/juricap/aicmd on main.
+
+- [Viewer plugins and remote filesystems](docs/Plugins-and-remote-filesystems.md)

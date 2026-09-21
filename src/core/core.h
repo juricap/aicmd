@@ -45,6 +45,7 @@ fs::path absolute_path(const fs::path&, const fs::path& base);
 std::string display_path(const fs::path&);
 std::string safe_text(std::string);
 void sort_entries(std::vector<Entry>&, const Options&);
+bool matches_pattern(const fs::path& name, const std::string& pattern);
 
 struct Snapshot { Id id = 0; fs::path path; std::vector<Entry> entries; size_t bytes = 0; };
 enum class Load { Unloaded, Loading, Loaded, Failed };
@@ -84,7 +85,7 @@ enum class Action {
     SessionGet, CapabilitiesGet, PanelActivate, PanelConfigure, TabCreate, TabActivate,
     TabClose, TabCycle, Navigate, Parent, Back, Forward, Refresh, TreeExpand, TreeCollapse,
     TreeReveal, SelectionSet, ViewportSet, SortSet, FilterSet, JobGet, JobCancel,
-    FileEdit, FileView, SessionSave, AppQuit
+    FileEdit, FileView, SessionSave, SelectionPattern, AppQuit
 };
 struct CommandInfo { Action action; const char* name; const char* description; const char* effect; };
 const std::vector<CommandInfo>& commands();
@@ -95,11 +96,12 @@ struct Command {
     fs::path path, focus, anchor;
     std::set<fs::path> selection;
     Options options;
+    std::string pattern = "*";
     int value = 0;
     bool flag = false;
     std::optional<Id> expectedRevision;
 };
-struct Result { Error error; Id tab = 0, job = 0; fs::path launchPath{}; bool save = false; };
+struct Result { Error error; Id tab = 0, job = 0; fs::path launchPath{}; bool save = false, viewOnly = false; };
 enum class JobState { Running, Succeeded, Failed, Cancelled };
 struct Job { Id id = 0; JobState state = JobState::Running; Error error{}; };
 struct SavedTab {

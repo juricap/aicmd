@@ -12,9 +12,9 @@ Current UI follows the user's compact Total Commander / mc setup: full-width fil
 
 ## Verified
 
-- Windows x64 MSVC 19.33 release build; **43 core checks pass**. Unicode/Japanese/emoji names, long paths, cancelled/stale scans, link identification/cycle prevention in the experimental core, history, independent tabs, failed paths, sorting, resource limits, and session corruption/round-trip are covered.
+- Windows x64 MSVC 19.33 release build; **54 core checks pass**. Unicode/Japanese/emoji names, long paths, cancelled/stale scans, link identification/cycle prevention in the experimental core, history, independent tabs, failed paths, sorting, resource limits, and session corruption/round-trip are covered.
 - Native GUI smoke passes with real controls: full-width/compact geometry, tabs, parent/close, keyboard-routing for panel/tab/path/marks, and valid session output. Screenshot inspected at 100% DPI. This is not a screen-reader or all-DPI certification.
-- Linux core/CLI **build without warnings and pass the same 43 checks**, via `ssh ai` on `jurzai1`, GCC 11.4 / CMake 3.22.1. Isolated checkout: `/data/devel/aicmd-check-20260921`. Actual CLI directory listing verified. No Linux GUI/TUI exists yet.
+- Linux core/CLI **build without warnings and pass the same 54 checks**, via `ssh ai` on `jurzai1`, GCC 11.4 / CMake 3.22.1. Isolated checkout: `/data/devel/aicmd-check-20260921`. Actual CLI directory listing verified. No Linux GUI/TUI exists yet.
 
 ## Measurements
 
@@ -33,8 +33,14 @@ Reproduce: `build.bat`, `scripts/test-gui.ps1`, `scripts/benchmark.ps1`, `script
 
 ## Limits
 
-No file mutation, TUI, production model transport, macOS/Linux GUI, or read-only jptxt launch yet. Listings publish only when enumeration and sorting complete. Network cancellation is cooperative; blocked OS I/O can delay shutdown. Per-directory budget is 32 MiB; retained listing budget is approximately 128 MiB. These are estimates of listing storage, not process RSS guarantees.
+No file mutation, TUI, production model transport, macOS/Linux GUI, or image viewer plugins yet. Listings publish only when enumeration and sorting complete. Network cancellation is cooperative; blocked OS I/O can delay shutdown. Per-directory budget is 32 MiB; retained listing budget is approximately 128 MiB. These are estimates of listing storage, not process RSS guarantees.
 
 ## Repository
 
-Local Git `main`; GitHub remote pending the user's URL. Source, tests, vendored JSON/license, design reference screenshot, and vault are tracked. Build products and test artifacts are ignored.
+GitHub: https://github.com/juricap/aicmd, branch main. Source, tests, vendored JSON/license, design reference screenshot, and vault are tracked. Build products and test artifacts are ignored.
+
+## Viewer and selection update
+
+F3 now uses jptxt protocol 2 in enforced read-only mode; F4 in jptxt enables text editing in place. Ctrl+A and keypad select/unselect/invert route through the shared core. Marks use red text with an independent name-cell cursor. Native smoke covers wildcard masks and focus return from the dialog. Image and remote filesystem plugins are design work only; see [plan](../docs/Plugins-and-remote-filesystems.md). The binary measurements above describe the initial browsing baseline, before this update.
+
+Actual Windows F3 handoff passed with a spaced filename, using the sibling jptxt binary. Its separate viewer suite passes 29 checks on Windows/Linux and native GUI tests for read-only enforcement, same-tab editing, and single-instance delivery. Cocoa changes remain unverified.

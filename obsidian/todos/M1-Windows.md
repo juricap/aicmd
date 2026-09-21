@@ -33,6 +33,9 @@ First usable implementation is built and validated. Broader acceptance work rema
 - [ ] M3: terminal frontend usable over SSH; keyboard parity with GUI.
 - [ ] M4: macOS / Linux GUI frontends.
 - [ ] M5: copy/move/rename/mkdir/trash with explicit conflicts and partial completion reporting.
-- [ ] M5: explicit read-only jptxt viewer contract for F3.
+- [x] Explicit read-only jptxt viewer contract for F3; F4 enables editing in place.
 - [ ] M6: Gemini function/Live adapter over the shared commands.
-- [ ] Configure GitHub remote after user provides it; no remote configured yet.
+- [x] Configure GitHub remote and publish main with id_ghjuricap.
+
+- [ ] jptxt image renderer and versioned viewer plugin API.
+- [ ] Provider location refactor, SFTP first, FTP/FTPS and SMB/CIFS adapters; see plugin design.

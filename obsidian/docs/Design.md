@@ -2,7 +2,7 @@
 
 Version 0.2 — 2026-09-21 — implementation baseline, revised to the user's Total Commander screenshot and Midnight Commander workflow.
 
-User-directed constraints: compact full-width file panels; keyboard first; no persistent directory trees or oversized buttons. Linux validation uses `ssh ai` under `/data/devel/`, never WSL. Work is tracked in local Git; GitHub remote is pending.
+User-directed constraints: compact full-width file panels; keyboard first; no persistent directory trees or oversized buttons. Linux validation uses `ssh ai` under `/data/devel/`, never WSL. Work is tracked in local Git; GitHub remote is git@github.com:juricap/aicmd.git.
 
 ## 1. Product and scope
 
@@ -107,7 +107,7 @@ File list: directories first, name ascending initially; header clicks change sor
 | Ctrl+R | Refresh active location |
 | Ctrl+H | Toggle hidden entries |
 | F4 | Edit focused file with jptxt |
-| F3 | Read-only view, once the explicit viewer contract is available |
+| F3 | Read-only view in protocol-2 jptxt |
 | Escape | Cancel pending navigation or dismiss transient UI; does not close application |
 
 Use standard focus traversal inside dialogs. Arrow keys move the list cursor without clearing marked files. Reserve Total Commander-style F5/F6 for copy/move when file operations arrive. Do not display nonfunctional copy/move/delete buttons.
@@ -142,7 +142,7 @@ M1 registry families (external transports arrive in M2):
 | `tree_expand`, `tree_collapse`, `tree_reveal` | Explicit tab and node/location |
 | `selection_set`, `entry_focus`, `viewport_set` | Stable entry IDs and snapshot ID |
 | `sort_set`, `filter_set` | Set order and hidden-entry visibility |
-| `file_edit`, `file_view` | Host-service capability; viewer unavailable until supported |
+| `file_edit`, `file_view` | Host-service capability; F3 requires protocol-2 jptxt |
 | `job_get`, `job_cancel` | Observe or request cancellation |
 | `settings_set`, `session_save`, `app_quit` | Validated settings, persistence, orderly shutdown |
 
@@ -186,7 +186,7 @@ jptxt is currently a GUI application, so it cannot be assumed to work in a headl
 
 Resolve executable from explicit configuration, sibling installation, then PATH. Launch with literal arguments through OS process APIs, never a shell command assembled from filenames. Missing editor produces a clear configuration error.
 
-F4 can use existing `jptxt <absolute-path>`. F3 requires a proposed jptxt extension `--readonly -- <path>` with mode-aware single-instance IPC and enforced read-only behavior, including attempts to switch views. This extension is not implemented by this specification; advertise `file_view` as unavailable until negotiated/configured support exists. Do not silently open editable text for a read-only command.
+F4 can use existing `jptxt <absolute-path>`. F3 uses the jptxt extension `--readonly -- <path>` with mode-aware single-instance IPC and enforced read-only behavior, including attempts to switch views. This extension is implemented in sibling jptxt v0.2.0. Windows checks the executable protocol resource before offering a read-only launch. Do not silently open editable text for a read-only command.
 
 The existing singleton launch may exit immediately after forwarding to an open editor, so child-process exit is not evidence that editing finished. M1 refreshes on explicit refresh/window reactivation. Full saved-file notification can be added later. Paths containing newline/control characters expose limitations in jptxt's current handoff protocol; detect unsupported cases rather than opening the wrong file.
 
@@ -227,3 +227,5 @@ M5/M6 can move earlier after M2 if needed; Windows browsing stays first. Archive
 Initial performance budgets, **targets, not measurements**: warm local window interactive within 150 ms; first visible batch for a 10k-entry local SSD directory within 250 ms; complete sorted listing within 1 s; UI input/paint p95 below 16 ms while enumerating; idle working set below 40 MiB with two ordinary tabs; stripped Windows GUI binary below 3 MiB excluding jptxt. Record hardware, build, cache state, directory shape, and 20-run median/p95. Cold/network tests report separately; do not hide slow I/O in warm averages.
 
 Use a fake provider for deterministic race/error tests and real disposable filesystem fixtures for path semantics. Headless core builds must not link GUI libraries. OS integration checks cover Unicode, long paths, access denial, disappearing entries, links/cycles, offline shares, and corrupted state. Actual native UI smoke checks cover focus, DPI, keyboard, and restore. Revisions and generated tool schemas are contract-tested once transports exist.
+
+See [Plugins and remote filesystems](Plugins-and-remote-filesystems.md) for image renderers, the provider boundary, SSH/SFTP, FTP/FTPS, SMB/CIFS, credentials, and remote editing conflicts. These extensions are planned, not implemented.

@@ -20,7 +20,7 @@ A minimal native, two-panel file manager following the compact, keyboard-first T
 
 Requires Visual Studio 2022 C++ tools; `build.bat` configures Release, builds, and runs core tests. CMake also supports other developer environments.
 
-Validation: `scripts\test-gui.ps1`, `scripts\benchmark.ps1`, `scripts\test-linux.ps1`. Windows and Linux core tests currently pass 43 checks; the GUI is approximately 553 KiB. Details and limitations are in [status](obsidian/status/Status.md).
+Validation: `scripts\test-gui.ps1`, `scripts\benchmark.ps1`, `scripts\test-linux.ps1`. Windows and Linux core tests currently pass 54 checks. Details and limitations are in [status](obsidian/status/Status.md).
 
 Two full-width lists with compact tabs, path bars, and columns. Enter/Backspace browse; Tab switches panel; Ctrl+T/W creates/closes tabs; Ctrl+L edits the path; Insert/Space marks entries; F4 opens jptxt.
 
@@ -28,4 +28,4 @@ Session: `%LOCALAPPDATA%\aicmd\session.json`. Use `--session <file>` for an inde
 
 Linux checks run via `ssh ai`, in an isolated directory under `/data/devel/`. **Do not use WSL.**
 
-Local Git tracks development. GitHub remote will be configured when supplied by the user.
+Development: https://github.com/juricap/aicmd, branch main.

@@ -60,7 +60,7 @@ static void races() {
     auto node = c.tab(0)->roots.front(); auto tree = cmd(Action::TreeExpand); tree.node = node;
     c.execute(tree); settle(c); auto count = c.tab(0)->tree.at(node).children.size();
     c.execute(tree); settle(c); require(c.tab(0)->tree.at(node).children.size() == count,"Tree re-expansion doesn't duplicate children");
-    require(c.execute(cmd(Action::FileView)).error.code == "unsupported","F3 cannot silently edit");
+    require(c.execute(cmd(Action::FileView)).error.code == "stale_snapshot","Viewer validates explicit snapshot");
 }
 static void real_fs(const fs::path& root) {
     fs::create_directories(root/"folder"/"nested"); fs::create_directories(root/"empty");
@@ -87,6 +87,24 @@ static void real_fs(const fs::path& root) {
     auto select = cmd(Action::SelectionSet); select.snapshot = c.tab(0)->snapshot->id; select.focus = unicode; select.selection.insert(unicode); c.execute(select);
     auto edit = cmd(Action::FileEdit); edit.snapshot = select.snapshot; edit.path = unicode;
     require(c.execute(edit).launchPath == root/unicode,"Editor receives literal selected path");
+    edit.action = Action::FileView;
+    auto viewer = c.execute(edit);
+    require(viewer.launchPath == root/unicode && viewer.viewOnly,"Viewer launch carries read-only capability request");
+    auto mark = cmd(Action::SelectionPattern); mark.snapshot = c.tab(0)->snapshot->id; mark.pattern = "*.TXT"; mark.value = 1;
+    c.execute(mark); require(c.tab(0)->selection.size() == 2,"Num+ additive case-insensitive wildcard selection");
+    mark.pattern = "tiny.*"; mark.value = -1; c.execute(mark);
+    require(c.tab(0)->selection.size() == 1 && c.tab(0)->selection.count(unicode),"Num- removes matching names only");
+    mark.pattern = "*"; mark.value = 0; c.execute(mark);
+    require(c.tab(0)->selection.size() == 2 && !c.tab(0)->selection.count(unicode),"Num* inversion can exclude directories");
+    mark.flag = true; mark.value = 1; c.execute(mark);
+    require(c.tab(0)->selection.size() == c.tab(0)->snapshot->entries.size(),"Ctrl+A includes files and directories");
+    mark.value = -1; c.execute(mark); require(c.tab(0)->selection.empty(),"Unselect all");
+    require(matches_pattern("README","*.*"),"Commander *.* matches extensionless names");
+    require(matches_pattern("test.h","*.cpp;*.h"),"Multiple masks");
+    require(matches_pattern(fs::u8path(u8"日本😀.txt"),"???.txt"),"Question mark consumes a Unicode character");
+    require(!matches_pattern("test.cpp","*.h"),"Nonmatching wildcard rejected");
+    mark.snapshot = 0; require(c.execute(mark).error.code == "stale_snapshot","Pattern selection rejects stale snapshots");
+    c.execute(select);
     c.execute(cmd(Action::Refresh)); settle(c);
     require(c.tab(0)->selection.count(unicode) == 1,"Selection survives refresh");
     auto nav = cmd(Action::Navigate); nav.path = root/"folder"; c.execute(nav); settle(c); c.execute(cmd(Action::Parent)); settle(c);
