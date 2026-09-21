@@ -1,0 +1,148 @@
+#include "core/core.h"
+#include <algorithm>
+#include <chrono>
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
+namespace ac {
+std::string safe_text(std::string s) {
+    std::string out;
+    const char* hex = "0123456789ABCDEF";
+    for (unsigned char c : s) {
+        if (c < 32 || c == 127) { out += "\\x"; out += hex[c >> 4]; out += hex[c & 15]; }
+        else out += static_cast<char>(c);
+    }
+    return out;
+}
+std::string display_path(const fs::path& p) {
+    try { return safe_text(p.u8string()); } catch (...) { return "[unrepresentable path]"; }
+}
+fs::path absolute_path(const fs::path& p, const fs::path& base) {
+    if (p.empty()) return base;
+    // Root-relative and drive-relative Windows input must not inherit process CWD.
+#ifdef _WIN32
+    if (p.has_root_name() && !p.has_root_directory()) {
+        if (p.root_name() != base.root_name()) return (p.root_name() / L"\\" / p.relative_path()).lexically_normal();
+        return (base / p.relative_path()).lexically_normal();
+    }
+    if (!p.has_root_name() && p.has_root_directory()) return (base.root_name() / p).lexically_normal();
+#endif
+    auto result = (p.is_absolute() ? p : base / p).lexically_normal();
+    if (result != result.root_path() && result.filename().empty()) result = result.parent_path();
+    return result;
+}
+void sort_entries(std::vector<Entry>& es, const Options& o) {
+    auto compare = [](const fs::path& a,const fs::path& b) {
+#ifdef _WIN32
+        int n = CompareStringOrdinal(a.c_str(),static_cast<int>(a.native().size()),b.c_str(),static_cast<int>(b.native().size()),TRUE);
+        return n ? n-CSTR_EQUAL : a.compare(b);
+#else
+        auto left = a.native(), right = b.native();
+        for (auto& ch : left) if (ch >= 'A' && ch <= 'Z') ch += 'a'-'A';
+        for (auto& ch : right) if (ch >= 'A' && ch <= 'Z') ch += 'a'-'A';
+        return left.compare(right);
+#endif
+    };
+    std::sort(es.begin(), es.end(), [&](const Entry& a, const Entry& b) {
+        if (a.directory != b.directory) return a.directory;
+        int cmp = 0;
+        if (o.sort == Sort::Size) cmp = a.size < b.size ? -1 : a.size > b.size ? 1 : 0;
+        if (o.sort == Sort::Modified) cmp = a.modified < b.modified ? -1 : a.modified > b.modified ? 1 : 0;
+        if (o.sort == Sort::Extension) cmp = compare(a.name.extension(),b.name.extension());
+        if (!cmp) cmp = compare(a.name,b.name);
+        if (!cmp) cmp = a.name.compare(b.name); // Identity remains exact, even for case-only names.
+        return o.descending ? cmp > 0 : cmp < 0;
+    });
+}
+static Error error_of(int code) {
+#ifdef _WIN32
+    const char* kind = code == ERROR_ACCESS_DENIED ? "access_denied" :
+        (code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND) ? "not_found" : "unavailable";
+    return {kind, std::system_category().message(code), code};
+#else
+    return {code == EACCES ? "access_denied" : code == ENOENT ? "not_found" : code == ENOTDIR ? "invalid_path" : "unavailable", std::system_category().message(code), code};
+#endif
+}
+class Local final : public Provider {
+public:
+    std::vector<fs::path> roots() override {
+#ifdef _WIN32
+        std::vector<fs::path> out;
+        DWORD bits = GetLogicalDrives();
+        for (int i = 0; i < 26; ++i) if (bits & (1u << i)) { std::wstring s = L"A:\\"; s[0] += static_cast<wchar_t>(i); out.emplace_back(s); }
+        return out;
+#else
+        return {fs::path("/")};
+#endif
+    }
+    Listing list(const fs::path& path, bool dirs, const Cancel& cancel, size_t budget) override {
+        Listing out;
+        auto add = [&](Entry e) {
+            if (dirs && !e.directory) return true;
+            out.bytes += sizeof(Entry) * 2 + e.name.native().size() * sizeof(fs::path::value_type) * 2;
+            if (out.bytes > budget) { out.error = {"resource_limit", "Directory exceeds the listing memory budget"}; return false; }
+            e.id = out.entries.size() + 1;
+            out.entries.push_back(std::move(e));
+            return true;
+        };
+#ifdef _WIN32
+        auto native = path.native();
+        if (native.rfind(L"\\\\?\\", 0) != 0) {
+            if (native.rfind(L"\\\\", 0) == 0) native = L"\\\\?\\UNC\\" + native.substr(2);
+            else native = L"\\\\?\\" + native;
+        }
+        DWORD attr = GetFileAttributesW(native.c_str());
+        if (attr == INVALID_FILE_ATTRIBUTES) { out.error = error_of(GetLastError()); return out; }
+        if (!(attr & FILE_ATTRIBUTE_DIRECTORY)) { out.error = {"invalid_path", "Location is not a directory"}; return out; }
+        if (native.back() != L'\\') native += L'\\';
+        WIN32_FIND_DATAW data{};
+        HANDLE h = FindFirstFileExW((native + L"*").c_str(), FindExInfoBasic, &data, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
+        if (h == INVALID_HANDLE_VALUE) {
+            DWORD err = GetLastError();
+            if (err != ERROR_FILE_NOT_FOUND) out.error = error_of(err);
+            return out;
+        }
+        do {
+            if (cancel->load()) { out.error = {"cancelled", "Cancelled"}; break; }
+            if (!wcscmp(data.cFileName,L".") || !wcscmp(data.cFileName,L"..")) continue;
+            Entry e; e.name = data.cFileName;
+            e.directory = (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+            e.link = (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+            e.hidden = (data.dwFileAttributes & FILE_ATTRIBUTE_HIDDEN) != 0;
+            e.system = (data.dwFileAttributes & FILE_ATTRIBUTE_SYSTEM) != 0;
+            e.readOnly = (data.dwFileAttributes & FILE_ATTRIBUTE_READONLY) != 0;
+            e.archive = (data.dwFileAttributes & FILE_ATTRIBUTE_ARCHIVE) != 0;
+            if (!e.directory) e.size = (uint64_t(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
+            uint64_t ticks = (uint64_t(data.ftLastWriteTime.dwHighDateTime) << 32) | data.ftLastWriteTime.dwLowDateTime;
+            e.modified = static_cast<int64_t>(ticks / 10000000) - 11644473600LL;
+            if (!add(std::move(e))) break;
+        } while (FindNextFileW(h, &data));
+        DWORD err = GetLastError();
+        FindClose(h);
+        if (!out.error && err != ERROR_NO_MORE_FILES) out.error = error_of(err);
+#else
+        std::error_code ec;
+        fs::directory_iterator it(path, ec), end;
+        if (ec) { out.error = error_of(ec.value()); return out; }
+        while (it != end) {
+            if (cancel->load()) { out.error = {"cancelled", "Cancelled"}; break; }
+            Entry e; e.name = it->path().filename();
+            e.hidden = !e.name.native().empty() && e.name.native()[0] == '.';
+            e.link = it->is_symlink(ec); ec.clear();
+            e.directory = it->is_directory(ec); ec.clear();
+            if (!e.directory) { auto n = it->file_size(ec); if (!ec) e.size = n; ec.clear(); }
+            auto t = it->last_write_time(ec);
+            if (!ec) e.modified = std::chrono::duration_cast<std::chrono::seconds>(t - fs::file_time_type::clock::now() + std::chrono::system_clock::now().time_since_epoch()).count();
+            ec.clear();
+            if (!add(std::move(e))) break;
+            it.increment(ec);
+            if (ec) { out.error = error_of(ec.value()); break; }
+        }
+#endif
+        if (out.error) { out.entries.clear(); out.bytes = 0; }
+        return out;
+    }
+};
+std::shared_ptr<Provider> local_provider() { return std::make_shared<Local>(); }
+}
