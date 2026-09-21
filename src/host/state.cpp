@@ -41,6 +41,8 @@ static Json encode(const SavedState& s) {
     Json j = {{"schema",1},{"native_unit_bytes",sizeof(fs::path::value_type)},
         {"active_panel",s.activePanel},{"split",s.splitPercent},{"width",s.width},{"height",s.height}};
     j["panels"] = Json::array();
+    j["bookmarks"] = Json::array();
+    for (const auto& path : s.bookmarks) j["bookmarks"].push_back(encode_path(path));
     for (auto& p : s.panels) {
         Json panel = {{"active",p.active},{"tree_visible",p.treeVisible},{"tree_width",p.treeWidth},{"tabs",Json::array()}};
         for (auto& t : p.tabs) {
@@ -66,6 +68,15 @@ StateLoad load_state(const fs::path& path) {
         auto j = Json::parse(f);
         if (j.at("schema") != 1 || j.at("native_unit_bytes") != sizeof(fs::path::value_type)) throw std::runtime_error("Unsupported session schema/platform; original file preserved");
         auto& s = r.state;
+        if (j.contains("bookmarks")) {
+            const auto& items = j.at("bookmarks");
+            if (!items.is_array() || items.size() > 128) throw std::runtime_error("Invalid bookmark count");
+            for (const auto& item : items) {
+                auto value = decode_path(item);
+                if (!value.is_absolute()) throw std::runtime_error("Bookmark is not absolute");
+                s.bookmarks.push_back(std::move(value));
+            }
+        }
         s.activePanel = j.at("active_panel").get<int>(); s.splitPercent = j.at("split").get<int>();
         s.width = std::clamp(j.value("width",1200),640,7680); s.height = std::clamp(j.value("height",760),400,4320);
         const auto& panels = j.at("panels");

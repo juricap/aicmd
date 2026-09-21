@@ -41,6 +41,7 @@ struct App {
     std::wstring renderedNotice;
     std::wstring selectionMask = L"*";
     bool selectionDirectories = true;
+    bool locationMenuOpen = false;
     int drag = -1;
     RECT divider{};
     int width = 1200, height = 760;
@@ -63,6 +64,52 @@ void layout();
 void save();
 void run_command(Command c);
 void capture(int p);
+void activate(int p);
+std::wstring menu_path(const fs::path& path) {
+    auto value = shown(path); std::wstring out;
+    for (auto c : value) { out += c; if (c == L'&') out += c; }
+    return out;
+}
+void location_menu(int p,bool drives) {
+    capture(p); activate(p);
+    auto menu = CreatePopupMenu();
+    std::vector<fs::path> locations;
+    if (drives) {
+        wchar_t buffer[512]{};
+        DWORD length = GetLogicalDriveStringsW(512,buffer);
+        if (length && length < 512) for (auto s = buffer; *s; s += wcslen(s)+1) {
+            locations.emplace_back(s);
+            std::wstring label = L"&"; label += s[0]; label += L":\\";
+            AppendMenuW(menu,MF_STRING,100+locations.size()-1,label.c_str());
+        }
+    } else {
+        locations = app->core.state().bookmarks;
+        AppendMenuW(menu,MF_STRING,1,L"&Add current folder");
+        bool present = std::find(locations.begin(),locations.end(),current(p)->path) != locations.end();
+        AppendMenuW(menu,MF_STRING|(present ? 0 : MF_GRAYED),2,L"&Remove current folder");
+        AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+        for (size_t i = 0; i < locations.size(); ++i) {
+            auto label = (i < 9 ? L"&"+std::to_wstring(i+1)+L" " : L"")+menu_path(locations[i]);
+            AppendMenuW(menu,MF_STRING,100+i,label.c_str());
+        }
+    }
+    RECT rect{}; GetWindowRect(app->panes[p].pathLabel,&rect);
+    app->locationMenuOpen = true;
+    if (!app->smokePath.empty()) {
+        ShowWindow(app->window,SW_SHOWNOACTIVATE);
+        PostMessageW(app->window,WM_CHAR,drives && !locations.empty() ? locations[0].native()[0] : L'a',0);
+    }
+    UINT selected = TrackPopupMenuEx(menu,TPM_RETURNCMD|TPM_NONOTIFY|TPM_LEFTALIGN,rect.left,rect.bottom,app->window,nullptr);
+    app->locationMenuOpen = false;
+    DestroyMenu(menu); SetFocus(app->panes[p].list);
+    Command c; c.panel = p;
+    if (!drives && (selected == 1 || selected == 2)) {
+        c.action = selected == 1 ? Action::BookmarkAdd : Action::BookmarkRemove;
+        c.path = current(p)->path; run_command(c); save();
+    } else if (selected >= 100 && selected-100 < locations.size()) {
+        c.action = Action::Navigate; c.path = locations[selected-100]; run_command(c);
+    }
+}
 void project_marks(int p) {
     const auto* t = current(p); auto& v = app->panes[p];
     if (!t || !v.snapshot || t->snapshot != v.snapshot) return;
@@ -375,20 +422,13 @@ LRESULT notify(NMHDR* hdr) {
                     int row = static_cast<int>(draw->nmcd.dwItemSpec);
                     bool focused = (ListView_GetItemState(v.list,row,LVIS_FOCUSED)&LVIS_FOCUSED) && p == app->core.state().activePanel;
                     bool marked = (ListView_GetItemState(v.list,row,LVIS_SELECTED)&LVIS_SELECTED) != 0;
-                    (void)focused;
                     draw->nmcd.uItemState &= ~(CDIS_SELECTED|CDIS_FOCUS);
-                    draw->clrTextBk = GetSysColor(COLOR_WINDOW);
-                    draw->clrText = marked ? RGB(192,0,0) : GetSysColor(COLOR_WINDOWTEXT);
-                    return CDRF_NEWFONT|CDRF_NOTIFYPOSTPAINT;
-                }
-                if (draw->nmcd.dwDrawStage == CDDS_ITEMPOSTPAINT) {
-                    int row = static_cast<int>(draw->nmcd.dwItemSpec);
-                    if (p == app->core.state().activePanel && (ListView_GetItemState(v.list,row,LVIS_FOCUSED)&LVIS_FOCUSED)) {
-                        RECT label{}; ListView_GetItemRect(v.list,row,&label,LVIR_LABEL);
-                        label.right = std::min<LONG>(label.right,ListView_GetColumnWidth(v.list,0));
-                        DrawFocusRect(draw->nmcd.hdc,&label);
-                    }
-                    return CDRF_DODEFAULT;
+                    draw->clrTextBk = focused ? RGB(0,28,44) : GetSysColor(COLOR_WINDOW);
+                    draw->clrText = marked ? (focused ? RGB(255,100,100) : RGB(192,0,0)) : focused ? RGB(255,255,255) : GetSysColor(COLOR_WINDOWTEXT);
+                    RECT rowRect{}, client{}; ListView_GetItemRect(v.list,row,&rowRect,LVIR_BOUNDS); GetClientRect(v.list,&client);
+                    rowRect.right = client.right;
+                    auto brush = CreateSolidBrush(draw->clrTextBk); FillRect(draw->nmcd.hdc,&rowRect,brush); DeleteObject(brush);
+                    return CDRF_NEWFONT;
                 }
             } else if (hdr->code == LVN_ODFINDITEMW) {
                 auto* find = reinterpret_cast<NMLVFINDITEMW*>(hdr);
@@ -426,6 +466,8 @@ bool key(MSG& msg,int testModifiers = -1) {
     int p = app->core.state().activePanel; HWND focus = GetFocus();
     for (int i = 0; i < 2; ++i) { auto& v = app->panes[i]; if (focus == v.path || focus == v.tabs || focus == v.list) p = i; }
     auto& v = app->panes[p];
+    if (alt && (msg.wParam == VK_F1 || msg.wParam == VK_F2)) { location_menu(msg.wParam == VK_F1 ? 0 : 1,true); return true; }
+    if (ctrl && msg.wParam == 'D') { location_menu(p,false); return true; }
     if (ctrl && msg.wParam == 'L') { activate(p); edit_path(p); return true; }
     if (ctrl && msg.wParam == 'T') { action(Action::TabCreate,p); return true; }
     if (ctrl && msg.wParam == 'W') { action(Action::TabClose,p); return true; }
@@ -484,7 +526,7 @@ void save() {
     app->dirty = false; app->lastSave = GetTickCount64();
 }
 void smoke() {
-    if (app->smokePath.empty()) return;
+    if (app->smokePath.empty() || app->locationMenuOpen) return;
     if (++app->smokeTicks > 600) { app->smokeFailed = true; PostMessageW(app->window,WM_CLOSE,0,0); return; }
     if (app->core.busy()) return;
     auto check = [](bool okay) { static int index = 0; ++index; if (!okay) { app->smokeFailed = true; std::ofstream log(app->smokePath.string()+".failures",std::ios::app); log << "stage " << app->smokeStage << " check " << index << '\n'; } };
@@ -532,9 +574,13 @@ void smoke() {
         press(VK_MULTIPLY); check(current(1)->selection.size() == current(1)->snapshot->entries.size()-marked);
         press(VK_SUBTRACT,2); check(current(1)->selection.empty());
         press('L',1); press(VK_ESCAPE); check(!app->panes[1].editingPath);
+        press('D',1); check(app->core.state().bookmarks.size() == 1);
+        press(VK_F1,4); check(app->core.state().activePanel == 0); check(current(0)->requested == current(0)->requested.root_path());
+        press(VK_F2,4); check(app->core.state().activePanel == 1); check(current(1)->requested == current(1)->requested.root_path());
         save();
         auto persisted = load_state(app->statePath);
         check(persisted.found && !persisted.error && persisted.state.panels[0].tabs.size() == 1);
+        check(persisted.state.bookmarks.size() == 1);
         PostMessageW(app->window,WM_CLOSE,0,0);
     }
     ++app->smokeStage;
@@ -631,7 +677,12 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int show) {
         auto restored = load_state(app->statePath);
         if (restored.error) { app->notice = L"Session could not be restored; original preserved. " + wide(restored.error.message); app->saveAllowed = false; }
         if (restored.found && !restored.error && !explicitPaths) { app->core.restore(restored.state); app->width = restored.state.width; app->height = restored.state.height; }
-        else app->core.start(left,right);
+        else {
+            app->core.start(left,right);
+            if (restored.found && !restored.error && !restored.state.bookmarks.empty()) {
+                auto state = app->core.save(); state.bookmarks = restored.state.bookmarks; app->core.restore(state);
+            }
+        }
         INITCOMMONCONTROLSEX icc{sizeof(icc),ICC_LISTVIEW_CLASSES|ICC_TAB_CLASSES}; InitCommonControlsEx(&icc);
         WNDCLASSEXW wc{}; wc.cbSize = sizeof(wc); wc.hInstance = instance; wc.lpfnWndProc = window_proc; wc.lpszClassName = L"aicmd-window";
         wc.hCursor = LoadCursorW(nullptr,IDC_ARROW); wc.hIcon = LoadIconW(nullptr,IDI_APPLICATION); wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW+1);

@@ -31,6 +31,8 @@ const std::vector<CommandInfo>& commands() {
         {Action::FileView,"file_view","Request read-only viewer launch","launch"},
         {Action::SessionSave,"session_save","Request host persistence","host"},
         {Action::SelectionPattern,"selection_pattern","Add, remove, or invert marks matching a wildcard mask","session"},
+        {Action::BookmarkAdd,"bookmark_add","Bookmark the current folder","session"},
+        {Action::BookmarkRemove,"bookmark_remove","Remove a bookmarked folder","session"},
         {Action::AppQuit,"app_quit","Quit session","session"}
     };
     return items;
@@ -244,6 +246,17 @@ Result Core::execute(const Command& c) {
     case Action::SessionGet: case Action::CapabilitiesGet: return {};
     case Action::JobGet: return job(c.job) ? Result{} : Result{{"not_found","Job expired or unknown"}};
     case Action::SessionSave: r.save = true; return r;
+    case Action::BookmarkAdd: {
+        if (!t) return {{"not_found","No active tab"}};
+        auto& items = state_.bookmarks;
+        if (std::find(items.begin(),items.end(),t->path) != items.end()) return {};
+        if (items.size() >= 128) return {{"resource_limit","Maximum 128 bookmarks"}};
+        items.push_back(t->path); break;
+    }
+    case Action::BookmarkRemove: {
+        auto& items = state_.bookmarks;
+        items.erase(std::remove(items.begin(),items.end(),c.path),items.end()); break;
+    }
     case Action::AppQuit: state_.quit = true; break;
     case Action::PanelActivate: state_.activePanel = c.panel; break;
     case Action::PanelConfigure:
@@ -358,6 +371,7 @@ bool Core::busy() const {
 }
 SavedState Core::save() const {
     SavedState out; out.activePanel = state_.activePanel; out.splitPercent = state_.splitPercent;
+    out.bookmarks = state_.bookmarks;
     for (int p = 0; p < 2; ++p) {
         auto& dest = out.panels[p]; const auto& panel = state_.panels[p];
         dest.treeVisible = panel.treeVisible; dest.treeWidth = panel.treeWidth;
@@ -374,6 +388,7 @@ SavedState Core::save() const {
 void Core::restore(const SavedState& saved) {
     for (auto& p : state_.panels) for (auto& t : p.tabs) { cancel(t); for (auto& kv : t.tree) if (kv.second.cancel) kv.second.cancel->store(true); }
     state_.panels = {};
+    state_.bookmarks = saved.bookmarks;
     state_.activePanel = std::clamp(saved.activePanel,0,1); state_.splitPercent = std::clamp(saved.splitPercent,20,80);
     for (int p = 0; p < 2; ++p) {
         const auto& src = saved.panels[p]; auto& panel = state_.panels[p];

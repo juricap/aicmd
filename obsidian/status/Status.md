@@ -12,9 +12,9 @@ Current UI follows the user's compact Total Commander / mc setup: full-width fil
 
 ## Verified
 
-- Windows x64 MSVC 19.33 release build; **54 core checks pass**. Unicode/Japanese/emoji names, long paths, cancelled/stale scans, link identification/cycle prevention in the experimental core, history, independent tabs, failed paths, sorting, resource limits, and session corruption/round-trip are covered.
+- Windows x64 MSVC 19.33 release build; **58 core checks pass**. Unicode/Japanese/emoji names, long paths, cancelled/stale scans, link identification/cycle prevention in the experimental core, history, independent tabs, failed paths, sorting, resource limits, and session corruption/round-trip are covered.
 - Native GUI smoke passes with real controls: full-width/compact geometry, tabs, parent/close, keyboard-routing for panel/tab/path/marks, and valid session output. Screenshot inspected at 100% DPI. This is not a screen-reader or all-DPI certification.
-- Linux core/CLI **build without warnings and pass the same 54 checks**, via `ssh ai` on `jurzai1`, GCC 11.4 / CMake 3.22.1. Isolated checkout: `/data/devel/aicmd-check-20260921`. Actual CLI directory listing verified. No Linux GUI/TUI exists yet.
+- Linux core/CLI **build without warnings and pass the same 58 checks**, via `ssh ai` on `jurzai1`, GCC 11.4 / CMake 3.22.1. Isolated checkout: `/data/devel/aicmd-check-20260921`. Actual CLI directory listing verified. No Linux GUI/TUI exists yet.
 
 ## Measurements
 
@@ -41,6 +41,10 @@ GitHub: https://github.com/juricap/aicmd, branch main. Source, tests, vendored J
 
 ## Viewer and selection update
 
-F3 now uses jptxt protocol 2 in enforced read-only mode; F4 in jptxt enables text editing in place. Ctrl+A and keypad select/unselect/invert route through the shared core. Marks use red text with an independent name-cell cursor. Native smoke covers wildcard masks and focus return from the dialog. Image and remote filesystem plugins are design work only; see [plan](../docs/Plugins-and-remote-filesystems.md). The binary measurements above describe the initial browsing baseline, before this update.
+F3 now uses jptxt protocol 2 in enforced read-only mode; F4 in jptxt enables text editing in place. Ctrl+A and keypad select/unselect/invert route through the shared core. Marks use red text with an independent full-row highlighted cursor. Native smoke covers wildcard masks and focus return from the dialog. Image and remote filesystem plugins are design work only; see [plan](../docs/Plugins-and-remote-filesystems.md). The binary measurements above describe the initial browsing baseline, before this update.
 
 Actual Windows F3 handoff passed with a spaced filename, using the sibling jptxt binary. Its separate viewer suite passes 29 checks on Windows/Linux and native GUI tests for read-only enforcement, same-tab editing, and single-instance delivery. Cocoa changes remain unverified.
+
+## Full-row cursor, bookmarks and drives
+
+Restored the full-row dark cursor highlight to match the reference, with red text retained for marks. Ctrl+D opens the saved-folder menu; Alt+F1/F2 opens current Windows drive letters for the left/right panel. Bookmark add/remove commands belong to the shared core and persist as an optional schema-1 field, preserving compatibility with old sessions. Native GUI smoke exercises bookmark creation and drive selection through the real popup menus. Windows/Linux core tests pass 58 checks; the full-row cursor screenshot was inspected.

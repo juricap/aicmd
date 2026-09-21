@@ -29,4 +29,11 @@ F3 opens jptxt read-only; F4 inside jptxt enables editing without restarting. F5
 | Shift+Num+ / Shift+Num- | Select / unselect everything |
 | Num* | Invert all marks |
 
-Marks use red text; the name-cell dotted cursor moves independently. Masks support *, ?, and *.* including extensionless names.
+Marks use red text; the full-row highlighted cursor moves independently. Masks support *, ?, and *.* including extensionless names.
+
+| Navigation key | Action |
+|---|---|
+| Ctrl+D | Folder bookmarks: Add current folder, remove current folder, or jump to a saved folder |
+| Alt+F1 / Alt+F2 | Choose a Windows drive for the left / right panel |
+
+Drive letters and bookmark numbers are menu accelerators; arrows/Enter select and Escape cancels. Bookmarks persist with the session and are shared by both panels.

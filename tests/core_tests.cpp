@@ -137,12 +137,20 @@ static void real_fs(const fs::path& root) {
         Id link = 0; for (auto& kv : c.tab(0)->tree) if (kv.second.link) link = kv.first;
         expand.node = link; require(c.execute(expand).error.code == "unsupported","Tree never recursively expands link cycles");
     } else std::cout << "SKIP directory symlink creation: " << ec.message() << '\n';
+    auto bookmark = cmd(Action::BookmarkAdd);
+    require(!c.execute(bookmark).error && c.state().bookmarks.size() == 1,"Bookmark current folder");
+    c.execute(bookmark);
+    require(c.state().bookmarks.size() == 1,"Duplicate bookmark suppressed");
     auto saved = c.save(); saved.width = 1300;
     auto statePath = root/"state.json";
     require(!save_state(statePath,saved),"Save session");
     auto loaded = load_state(statePath); if (loaded.error) std::cerr << "State error: " << loaded.error.message << '\n'; require(loaded.found && !loaded.error,"Load session");
     require(loaded.state.panels[0].tabs[0].path == c.tab(0)->path,"Saved native path round trip");
     Core restored; restored.restore(loaded.state); settle(restored);
+    require(restored.state().bookmarks == c.state().bookmarks,"Bookmarks survive disk and core restore");
+    bookmark.action = Action::BookmarkRemove; bookmark.path = c.tab(0)->path;
+    restored.execute(bookmark);
+    require(restored.state().bookmarks.empty(),"Remove bookmark");
     require(restored.tab(0)->path == c.tab(0)->path && !restored.tab(0)->error,"Restore active tab");
     require(!save_state(statePath,saved) && fs::exists(root/"state.json.bak"),"Backup valid session");
     { std::ofstream f(statePath); f << "{broken"; }

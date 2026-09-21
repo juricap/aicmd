@@ -39,3 +39,5 @@ First usable implementation is built and validated. Broader acceptance work rema
 
 - [ ] jptxt image renderer and versioned viewer plugin API.
 - [ ] Provider location refactor, SFTP first, FTP/FTPS and SMB/CIFS adapters; see plugin design.
+
+- [x] Full-row cursor with red selection marks, Ctrl+D persistent bookmarks, Alt+F1/F2 drive menus.

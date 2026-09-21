@@ -75,6 +75,7 @@ struct Tab {
 };
 struct Panel { std::vector<Tab> tabs; Id active = 0; bool treeVisible = false; int treeWidth = 170; };
 struct Session {
+    std::vector<fs::path> bookmarks;
     Id revision = 0;
     int activePanel = 0, splitPercent = 50;
     std::array<Panel, 2> panels;
@@ -85,7 +86,7 @@ enum class Action {
     SessionGet, CapabilitiesGet, PanelActivate, PanelConfigure, TabCreate, TabActivate,
     TabClose, TabCycle, Navigate, Parent, Back, Forward, Refresh, TreeExpand, TreeCollapse,
     TreeReveal, SelectionSet, ViewportSet, SortSet, FilterSet, JobGet, JobCancel,
-    FileEdit, FileView, SessionSave, SelectionPattern, AppQuit
+    FileEdit, FileView, SessionSave, SelectionPattern, BookmarkAdd, BookmarkRemove, AppQuit
 };
 struct CommandInfo { Action action; const char* name; const char* description; const char* effect; };
 const std::vector<CommandInfo>& commands();
@@ -111,7 +112,7 @@ struct SavedTab {
     size_t historyIndex = 0;
 };
 struct SavedPanel { std::vector<SavedTab> tabs; size_t active = 0; bool treeVisible = false; int treeWidth = 170; };
-struct SavedState { std::array<SavedPanel,2> panels; int activePanel = 0, splitPercent = 50, width = 1200, height = 760; };
+struct SavedState { std::vector<fs::path> bookmarks; std::array<SavedPanel,2> panels; int activePanel = 0, splitPercent = 50, width = 1200, height = 760; };
 
 class Core {
 public:
