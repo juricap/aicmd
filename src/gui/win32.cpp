@@ -30,6 +30,7 @@ struct Pane {
 struct App {
     Core core;
     HWND window{}, status{};
+    HWND resumeFocus{};
     std::array<Pane,2> panes;
     HFONT font{};
     HIMAGELIST icons{};
@@ -71,6 +72,13 @@ void layout();
 void save();
 void run_command(Command c);
 void capture(int p);
+void restore_keyboard_target() {
+    auto& pane = app->panes[app->core.state().activePanel];
+    HWND target = app->resumeFocus;
+    if ((target != pane.list && target != pane.tabs && target != pane.path) ||
+        !IsWindowVisible(target) || !IsWindowEnabled(target)) target = pane.list;
+    if (target && GetFocus() != target) SetFocus(target);
+}
 void redraw_row(HWND list,int row) {
     if (row < 0) return;
     RECT rect{}, client{};
@@ -500,6 +508,11 @@ bool key(MSG& msg,int testModifiers = -1) {
     bool ctrl = (GetKeyState(VK_CONTROL)&0x8000) != 0, shift = (GetKeyState(VK_SHIFT)&0x8000) != 0, alt = (GetKeyState(VK_MENU)&0x8000) != 0;
     if (testModifiers >= 0) { ctrl = (testModifiers&1) != 0; shift = (testModifiers&2) != 0; alt = (testModifiers&4) != 0; }
     int p = app->core.state().activePanel; HWND focus = GetFocus();
+    // An active top-level window is not necessarily focused on an input control.
+    // Recover navigation routing, but never redirect keys from the path editor.
+    if ((focus == app->window || !focus) && GetActiveWindow() == app->window) {
+        restore_keyboard_target(); focus = GetFocus();
+    }
     for (int i = 0; i < 2; ++i) { auto& v = app->panes[i]; if (focus == v.path || focus == v.tabs || focus == v.list) p = i; }
     auto& v = app->panes[p];
     if (alt && (msg.wParam == VK_F1 || msg.wParam == VK_F2)) { location_menu(msg.wParam == VK_F1 ? 0 : 1,true); return true; }
@@ -597,7 +610,23 @@ void smoke() {
     } else if (app->smokeStage == 6) {
         check(app->core.state().panels[1].tabs.size() == 1);
         check(current(1)->path == fs::current_path());
+        ShowWindow(app->window,SW_SHOWNOACTIVATE);
         HWND list = app->panes[1].list; SetFocus(list);
+        // Reproduce Windows returning focus to the top-level window after an
+        // external app exits. Navigation needs the child control, not just
+        // foreground ownership or a painted row cursor.
+        SendMessageW(app->window,WM_ACTIVATE,WA_INACTIVE,0);
+        SetFocus(app->window); check(GetFocus() == list);
+        press('L',1);
+        SetWindowTextW(app->panes[1].path,L"unfinished path");
+        SendMessageW(app->window,WM_ACTIVATE,WA_INACTIVE,0);
+        SetFocus(app->window);
+        check(GetFocus() == app->panes[1].path && text(app->panes[1].path) == L"unfinished path");
+        press(VK_ESCAPE);
+        SetFocus(app->panes[1].tabs);
+        SendMessageW(app->window,WM_ACTIVATE,WA_INACTIVE,0);
+        SetFocus(app->window); check(GetFocus() == app->panes[1].tabs);
+        SetFocus(list);
         int layouts = app->layoutPasses;
         for (int i = 0; i < 50; ++i) { press(VK_DOWN); capture(1); render(); press(VK_UP); capture(1); render(); }
         check(app->layoutPasses == layouts);
@@ -694,7 +723,13 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
             if (PtInRect(&app->divider,pt)) { SetCursor(LoadCursorW(nullptr,IDC_SIZEWE)); return TRUE; }
         }
         break;
+    case WM_SETFOCUS:
+        restore_keyboard_target(); return 0;
     case WM_ACTIVATE:
+        if (LOWORD(w) == WA_INACTIVE) {
+            HWND focus = GetFocus();
+            if (focus && IsChild(hwnd,focus)) app->resumeFocus = focus;
+        }
         if (LOWORD(w) != WA_INACTIVE && app->seen) {
             for (int p = 0; p < 2; ++p) if (current(p) && !current(p)->loading) action(Action::Refresh,p);
         }

@@ -28,3 +28,7 @@ User clarified that the cursor should highlight the full row. Implemented dark f
 ## 2026-09-22: SSH browsing and transfers; cursor redraw fix
 
 Removed relayout/unchanged-control repaint from cursor movement and limited row invalidation. Added Location boundaries, OpenSSH-backed SFTP v3, config/Include discovery, persistent browse/read/write lanes, bounded pipelined transfer, F3 caching and F5 recursive copy with exclusive staging/publication. Remote keys remain with OpenSSH. Windows/Linux offline suites pass; live ai tests cover byte-exact Unicode transfers, non-overwrite, cancellation and reconnection. Native GUI F3/F5 passed. See SSH documentation for intentionally unimplemented remote save, overwrites, metadata preservation and cache cleanup.
+
+## 2026-09-22: keyboard routing after closing the viewer
+
+Fixed the active-window/child-input mismatch after returning from jptxt. Remember the panel control on deactivation, restore it when the top-level window receives focus, and recover navigation routing if focus lands on the main window. Preserve path editing and tab focus. Local and SSH viewer tests now close jptxt and assert actual Home/Down/Up/Down cursor movement; the SSH test continues through F5. Native smoke covers right-panel input restoration, unfinished path editing and tabs. Windows build and both core suites pass.

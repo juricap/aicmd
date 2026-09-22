@@ -52,3 +52,5 @@ First usable implementation is built and validated. Broader acceptance work rema
 - [ ] Remote edit/save conflict workflow, overwrite/merge/resume policies.
 - [ ] Range-based remote viewing and automatic cache lifecycle cleanup.
 - [ ] Live Linux transport and macOS validation, WAN throughput profiling.
+
+- [x] Restore keyboard navigation after external viewer exit; verify local/SSH cursor movement and preserve path-editor/tab input.

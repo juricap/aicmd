@@ -36,6 +36,12 @@ try {
  $deadline = [DateTime]::UtcNow.AddSeconds(10)
  do { Start-Sleep -Milliseconds 100; $viewer = [ViewerTest]::Viewer() } while ($viewer -eq [IntPtr]::Zero -and [DateTime]::UtcNow -lt $deadline)
  if ($viewer -eq [IntPtr]::Zero -or [ViewerTest]::Title($viewer) -notmatch '\[VIEW\]') { throw 'F3 did not open a read-only jptxt window' }
+ [ViewerTest]::PostMessage($viewer,0x10,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null
+ $deadline = [DateTime]::UtcNow.AddSeconds(5)
+ while ([ViewerTest]::Viewer() -ne [IntPtr]::Zero -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
+ $viewer = [IntPtr]::Zero
+ [ViewerTest]::SetForegroundWindow($window) | Out-Null
+ & "$PSScriptRoot\assert-navigation.ps1" -Window $window
  'PASS aicmd F3 launches jptxt read-only with a spaced filename'
 } finally {
  if ($viewer -ne [IntPtr]::Zero) { [ViewerTest]::PostMessage($viewer,0x10,[IntPtr]::Zero,[IntPtr]::Zero) | Out-Null }

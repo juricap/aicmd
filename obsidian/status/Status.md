@@ -56,3 +56,5 @@ Removed layout, unchanged label/header updates and whole-list invalidation from 
 Added real SSH config discovery to drive menus, typed remote locations, persistent SFTP browsing and pipelined view/copy jobs. Windows and Linux pass 58 core + 14 offline SSH/copy checks. Live Windows-to-ai testing passes 45 checks; actual GUI remote F3 and F5 also pass. The 8 MiB upload/download roundtrip was byte-exact and took about 1.8 seconds including connection startup. Current Linux checkout: /data/devel/aicmd-check-20260922. See [SSH](../docs/SSH.md) for authentication, overwrite, staging and remote-edit limitations.
 
 Current release build: aicmd.exe 755,200 bytes; CLI 526,848 bytes. The table above remains the initial baseline.
+
+Viewer-return keyboard fix: the active window now restores its panel input control. Verified actual navigation after closing local and SSH jptxt views, plus path-editor/tab preservation. Updated scripts/test-viewer.ps1 and scripts/test-ssh-gui.ps1 use scripts/assert-navigation.ps1 to check row movement, not merely foreground state.
