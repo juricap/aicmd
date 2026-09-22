@@ -101,9 +101,9 @@ static Error error_of(int code) {
 }
 class Local final : public Provider {
 public:
-    std::vector<fs::path> roots() override {
+    std::vector<Location> roots() override {
 #ifdef _WIN32
-        std::vector<fs::path> out;
+        std::vector<Location> out;
         DWORD bits = GetLogicalDrives();
         for (int i = 0; i < 26; ++i) if (bits & (1u << i)) { std::wstring s = L"A:\\"; s[0] += static_cast<wchar_t>(i); out.emplace_back(s); }
         return out;
@@ -111,7 +111,9 @@ public:
         return {fs::path("/")};
 #endif
     }
-    Listing list(const fs::path& path, bool dirs, const Cancel& cancel, size_t budget) override {
+    Listing list(const Location& location, bool dirs, const Cancel& cancel, size_t budget) override {
+        if (location.is_remote()) return {{},{"unsupported","Remote provider unavailable"}};
+        const auto& path = location.local;
         Listing out;
         auto add = [&](Entry e) {
             if (dirs && !e.directory) return true;

@@ -41,3 +41,14 @@ First usable implementation is built and validated. Broader acceptance work rema
 - [ ] Provider location refactor, SFTP first, FTP/FTPS and SMB/CIFS adapters; see plugin design.
 
 - [x] Full-row cursor with red selection marks, Ctrl+D persistent bookmarks, Alt+F1/F2 drive menus.
+
+## SSH increment
+
+- [x] Remove cursor-triggered layout/full-list redraw; native regression check.
+- [x] SSH config alias discovery and Alt+F1/F2 SSH menus.
+- [x] Typed remote locations, SFTP browsing, persisted remote tabs/bookmarks.
+- [x] Persistent connections, pipelined F3 staging and non-overwriting F5 file/directory copying.
+- [x] Live ai roundtrip, cancellation, cache and native GUI checks.
+- [ ] Remote edit/save conflict workflow, overwrite/merge/resume policies.
+- [ ] Range-based remote viewing and automatic cache lifecycle cleanup.
+- [ ] Live Linux transport and macOS validation, WAN throughput profiling.

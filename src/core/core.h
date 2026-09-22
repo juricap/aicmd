@@ -1,4 +1,5 @@
 #pragma once
+#include "location.h"
 #include <array>
 #include <atomic>
 #include <condition_variable>
@@ -37,21 +38,22 @@ struct Listing { std::vector<Entry> entries; Error error; size_t bytes = 0; };
 class Provider {
 public:
     virtual ~Provider() = default;
-    virtual std::vector<fs::path> roots() = 0;
-    virtual Listing list(const fs::path&, bool directoriesOnly, const Cancel&, size_t budget) = 0;
+    virtual std::vector<Location> roots() = 0;
+    virtual Listing list(const Location&, bool directoriesOnly, const Cancel&, size_t budget) = 0;
 };
 std::shared_ptr<Provider> local_provider();
+std::shared_ptr<Provider> filesystem_provider();
 fs::path absolute_path(const fs::path&, const fs::path& base);
 std::string display_path(const fs::path&);
 std::string safe_text(std::string);
 void sort_entries(std::vector<Entry>&, const Options&);
 bool matches_pattern(const fs::path& name, const std::string& pattern);
 
-struct Snapshot { Id id = 0; fs::path path; std::vector<Entry> entries; size_t bytes = 0; };
+struct Snapshot { Id id = 0; Location path; std::vector<Entry> entries; size_t bytes = 0; };
 enum class Load { Unloaded, Loading, Loaded, Failed };
 struct TreeNode {
     Id id = 0, parent = 0, generation = 0;
-    fs::path path;
+    Location path;
     std::vector<Id> children;
     bool expanded = false, link = false;
     Load load = Load::Unloaded;
@@ -60,8 +62,8 @@ struct TreeNode {
 };
 struct Tab {
     Id id = 0, generation = 0, job = 0;
-    fs::path path, requested;
-    std::vector<fs::path> history;
+    Location path, requested;
+    std::vector<Location> history;
     size_t historyIndex = 0;
     Options options;
     std::shared_ptr<const Snapshot> snapshot;
@@ -75,7 +77,7 @@ struct Tab {
 };
 struct Panel { std::vector<Tab> tabs; Id active = 0; bool treeVisible = false; int treeWidth = 170; };
 struct Session {
-    std::vector<fs::path> bookmarks;
+    std::vector<Location> bookmarks;
     Id revision = 0;
     int activePanel = 0, splitPercent = 50;
     std::array<Panel, 2> panels;
@@ -86,7 +88,7 @@ enum class Action {
     SessionGet, CapabilitiesGet, PanelActivate, PanelConfigure, TabCreate, TabActivate,
     TabClose, TabCycle, Navigate, Parent, Back, Forward, Refresh, TreeExpand, TreeCollapse,
     TreeReveal, SelectionSet, ViewportSet, SortSet, FilterSet, JobGet, JobCancel,
-    FileEdit, FileView, SessionSave, SelectionPattern, BookmarkAdd, BookmarkRemove, AppQuit
+    FileEdit, FileView, FileCopy, ConnectionsGet, SessionSave, SelectionPattern, BookmarkAdd, BookmarkRemove, AppQuit
 };
 struct CommandInfo { Action action; const char* name; const char* description; const char* effect; };
 const std::vector<CommandInfo>& commands();
@@ -94,7 +96,8 @@ struct Command {
     Action action = Action::SessionGet;
     int panel = 0;
     Id tab = 0, node = 0, snapshot = 0, job = 0;
-    fs::path path, focus, anchor;
+    Location path;
+    fs::path focus, anchor;
     std::set<fs::path> selection;
     Options options;
     std::string pattern = "*";
@@ -102,21 +105,22 @@ struct Command {
     bool flag = false;
     std::optional<Id> expectedRevision;
 };
-struct Result { Error error; Id tab = 0, job = 0; fs::path launchPath{}; bool save = false, viewOnly = false; };
+struct Result { Error error; Id tab = 0, job = 0; Location launchPath{}; bool save = false, viewOnly = false; std::vector<std::string> connections{}; };
 enum class JobState { Running, Succeeded, Failed, Cancelled };
-struct Job { Id id = 0; JobState state = JobState::Running; Error error{}; };
+struct Job { Id id = 0; JobState state = JobState::Running; Error error{}; Cancel cancel; std::shared_ptr<std::atomic<uint64_t>> bytes; };
 struct SavedTab {
-    fs::path path, focus, anchor;
+    Location path;
+    fs::path focus, anchor;
     Options options;
-    std::vector<fs::path> history, expanded;
+    std::vector<Location> history, expanded;
     size_t historyIndex = 0;
 };
 struct SavedPanel { std::vector<SavedTab> tabs; size_t active = 0; bool treeVisible = false; int treeWidth = 170; };
-struct SavedState { std::vector<fs::path> bookmarks; std::array<SavedPanel,2> panels; int activePanel = 0, splitPercent = 50, width = 1200, height = 760; };
+struct SavedState { std::vector<Location> bookmarks; std::array<SavedPanel,2> panels; int activePanel = 0, splitPercent = 50, width = 1200, height = 760; };
 
 class Core {
 public:
-    explicit Core(std::shared_ptr<Provider> = local_provider());
+    explicit Core(std::shared_ptr<Provider> = filesystem_provider());
     ~Core();
     Core(const Core&) = delete;
     Core& operator=(const Core&) = delete;
@@ -125,24 +129,30 @@ public:
     const Job* job(Id) const;
     Result execute(const Command&);
     bool poll(); // Call on the owning session thread; workers only publish results.
-    void start(const fs::path& left, const fs::path& right);
+    void start(const Location& left, const Location& right);
     void restore(const SavedState&);
     SavedState save() const;
     bool busy() const;
+    std::vector<fs::path> take_viewers() { auto out = std::move(viewers_); viewers_.clear(); return out; }
 private:
     struct Work {
+        enum Kind { Scan, View, Copy } kind = Scan;
+        std::vector<Location> sources;
+        Location destination;
+        std::shared_ptr<std::atomic<uint64_t>> bytes;
         int panel = 0; Id tab = 0, node = 0, generation = 0, job = 0;
-        fs::path path, focusAfter;
+        Location path; fs::path focusAfter;
         int historyTarget = -1;
         bool refresh = false;
         Options options;
         Cancel cancel;
         size_t budget = 0;
     };
-    struct Done { Work work; Listing listing; };
+    struct Done { Work work; Listing listing; fs::path viewer; };
+    std::vector<fs::path> viewers_;
     std::shared_ptr<Provider> provider_;
     Session state_;
-    std::vector<fs::path> roots_;
+    std::vector<Location> roots_;
     std::map<Id, Job> jobs_;
     Id next_ = 1;
     std::mutex mutex_;
@@ -155,9 +165,9 @@ private:
     Tab* mutable_tab(int, Id = 0);
     void worker();
     bool submit(Work);
-    Result navigate(int, Tab&, fs::path, int historyTarget = -1, bool refresh = false, fs::path focusAfter = {});
+    Result navigate(int, Tab&, Location, int historyTarget = -1, bool refresh = false, fs::path focusAfter = {});
     void init_tree(Tab&);
-    Id reveal(Tab&, const fs::path&);
+    Id reveal(Tab&, const Location&);
     Result expand(int, Tab&, Id);
     void cancel(Tab&);
     void prune_jobs();

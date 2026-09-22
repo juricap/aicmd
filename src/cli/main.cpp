@@ -1,20 +1,29 @@
 #include "core/core.h"
+#include "fs/ssh.h"
 #include <algorithm>
 #include <chrono>
 #include <iostream>
 #include <thread>
 using namespace ac;
 int run(const std::vector<fs::path>& args) {
+    if (args.size() == 2 && args[1] == "ssh-hosts") { for (const auto& host : ssh_hosts()) std::cout << host << '\n'; return 0; }
+    if (args.size() == 4 && args[1] == "copy") {
+        auto source = absolute_path(Location(args[2]),Location(fs::current_path()));
+        auto destination = absolute_path(Location(args[3]),Location(fs::current_path()));
+        uint64_t bytes = 0; auto start = std::chrono::steady_clock::now();
+        copy_location(source,destination,std::make_shared<std::atomic<bool>>(false),[&](uint64_t n){bytes = n;});
+        std::cout << "Copied " << bytes << " bytes in " << std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count() << " s\n"; return 0;
+    }
     if (args.size() > 1 && args[1] == "commands") {
         for (auto& c : commands()) std::cout << c.name << '\t' << c.effect << '\t' << c.description << '\n';
         return 0;
     }
     if (args.size() < 3 || (args[1] != "list" && args[1] != "bench")) {
-        std::cout << "aicmd-cli commands | list <directory> | bench <directory> [runs]\n"; return args.size() == 1 ? 0 : 2;
+        std::cout << "aicmd-cli commands | ssh-hosts | list <directory or ssh://alias/path> | bench <directory> [runs] | copy <source> <destination>\n"; return args.size() == 1 ? 0 : 2;
     }
     int runs = args[1] == "bench" ? 20 : 1;
     if (args.size() > 3) { try { runs = std::clamp(std::stoi(args[3].string()),1,100); } catch (...) { return 2; } }
-    auto path = absolute_path(args[2],fs::current_path());
+    auto path = absolute_path(Location(args[2]),Location(fs::current_path()));
     Core core; core.start(path,path);
     for (int run = 0; run < runs; ++run) {
         auto start = std::chrono::steady_clock::now();

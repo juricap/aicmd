@@ -229,3 +229,7 @@ Initial performance budgets, **targets, not measurements**: warm local window in
 Use a fake provider for deterministic race/error tests and real disposable filesystem fixtures for path semantics. Headless core builds must not link GUI libraries. OS integration checks cover Unicode, long paths, access denial, disappearing entries, links/cycles, offline shares, and corrupted state. Actual native UI smoke checks cover focus, DPI, keyboard, and restore. Revisions and generated tool schemas are contract-tested once transports exist.
 
 See [Plugins and remote filesystems](Plugins-and-remote-filesystems.md) for image renderers, the provider boundary, SSH/SFTP, FTP/FTPS, SMB/CIFS, credentials, and remote editing conflicts. These extensions are planned, not implemented.
+
+## Implemented SSH increment (2026-09-22)
+
+See [SSH](SSH.md) for the current built-in SFTP transport and its tested limits. Location now explicitly distinguishes native local paths from SSH alias/POSIX paths. F3 staging and F5 non-overwriting streaming/recursive copy run as shared core jobs. This advances part of the remote-provider and copy milestones; public plugin ABI, remote editing and other mutation policies remain open.

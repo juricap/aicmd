@@ -1,4 +1,5 @@
 #include "core.h"
+#include "fs/ssh.h"
 #include <algorithm>
 #include <stdexcept>
 
@@ -27,6 +28,8 @@ const std::vector<CommandInfo>& commands() {
         {Action::FilterSet,"filter_set","Set hidden entry visibility","session"},
         {Action::JobGet,"job_get","Read a job","read"},
         {Action::JobCancel,"job_cancel","Cancel tab work","session"},
+        {Action::FileCopy,"file_copy","Copy marked entries to the other panel without overwriting","write"},
+        {Action::ConnectionsGet,"connections_get","Discover SSH aliases from config","read"},
         {Action::FileEdit,"file_edit","Request host editor launch","launch"},
         {Action::FileView,"file_view","Request read-only viewer launch","launch"},
         {Action::SessionSave,"session_save","Request host persistence","host"},
@@ -83,10 +86,22 @@ void Core::worker() {
             if (stopping_) return;
             w = std::move(queue_.front()); queue_.pop_front(); running_.push_back(w.cancel);
         }
-        Listing listing;
+        Listing listing; fs::path viewer;
         try {
             if (w.cancel->load()) listing.error = {"cancelled","Cancelled"};
-            else listing = provider_->list(w.path,w.node != 0,w.cancel,w.budget);
+            else if (w.kind != Work::Scan) {
+                uint64_t completed = 0;
+                for (const auto& source : w.sources) {
+                    auto destination = w.destination/source.filename();
+                    if (w.kind == Work::View) {
+                        viewer = stage_view(source,w.cancel,[&](uint64_t n){w.bytes->store(n);});
+                        continue;
+                    }
+                    uint64_t bytes = 0;
+                    copy_location(source,destination,w.cancel,[&](uint64_t n){bytes = n; w.bytes->store(completed+n);});
+                    completed += bytes;
+                }
+            } else listing = provider_->list(w.path,w.node != 0,w.cancel,w.budget);
             if (!listing.error) {
                 if (!w.options.hidden) listing.entries.erase(std::remove_if(listing.entries.begin(),listing.entries.end(),[](const Entry& e){return e.hidden || e.system;}),listing.entries.end());
                 sort_entries(listing.entries,w.options);
@@ -95,7 +110,7 @@ void Core::worker() {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             running_.erase(std::remove(running_.begin(),running_.end(),w.cancel),running_.end());
-            if (!w.cancel->load()) done_.push_back({std::move(w),std::move(listing)});
+            if (!w.cancel->load()) done_.push_back({std::move(w),std::move(listing),std::move(viewer)});
         }
     }
 }
@@ -106,14 +121,14 @@ void Core::cancel(Tab& t) {
     ++t.generation;
     t.loading = false;
 }
-Result Core::navigate(int p, Tab& t, fs::path path, int target, bool refresh, fs::path focusAfter) {
+Result Core::navigate(int p, Tab& t, Location path, int target, bool refresh, fs::path focusAfter) {
     path = absolute_path(path,t.path);
     if (path.empty()) return {{"invalid_path","Empty location"}};
     cancel(t);
     t.requested = path; t.error = {}; t.loading = true;
     t.cancel = std::make_shared<std::atomic<bool>>(false);
     t.job = next_++;
-    jobs_[t.job] = {t.job}; prune_jobs();
+    Job job; job.id = t.job; jobs_[t.job] = job; prune_jobs();
     Work w; w.panel = p; w.tab = t.id; w.generation = t.generation; w.job = t.job;
     w.path = path; w.focusAfter = std::move(focusAfter); w.historyTarget = target; w.refresh = refresh;
     w.options = t.options; w.cancel = t.cancel; w.budget = 32 * 1024 * 1024;
@@ -131,9 +146,9 @@ void Core::init_tree(Tab& t) {
     for (auto& root : roots_) { TreeNode n; n.id = next_++; n.path = root; t.roots.push_back(n.id); t.tree.emplace(n.id,std::move(n)); }
     reveal(t,t.path);
 }
-Id Core::reveal(Tab& t, const fs::path& path) {
+Id Core::reveal(Tab& t, const Location& path) {
     if (path.empty()) return 0;
-    std::vector<fs::path> chain;
+    std::vector<Location> chain;
     auto q = path;
     for (int depth = 0; depth < 256 && !q.empty(); ++depth) {
         chain.push_back(q); auto parent = q.parent_path(); if (q == parent) break; q = parent;
@@ -175,6 +190,12 @@ bool Core::poll() {
     bool changed = false;
     for (auto& d : done) {
         auto& w = d.work;
+        if (w.kind != Work::Scan) {
+            auto& job = jobs_[w.job]; job.error = d.listing.error;
+            job.state = job.error ? JobState::Failed : JobState::Succeeded;
+            if (!job.error && !d.viewer.empty()) viewers_.push_back(d.viewer);
+            changed = true; continue;
+        }
         Tab* t = mutable_tab(w.panel,w.tab);
         if (!t || w.cancel->load()) continue;
         if (w.node) {
@@ -186,10 +207,10 @@ bool Core::poll() {
             n.load = n.error ? Load::Failed : Load::Loaded;
             if (!n.error) {
                 std::vector<Id> children;
-                std::map<fs::path,Id> oldChildren;
+                std::map<Location,Id> oldChildren;
                 for (Id old : n.children) oldChildren.emplace(t->tree.at(old).path,old);
                 for (auto& e : d.listing.entries) {
-                    fs::path childPath = n.path / e.name; Id child = 0;
+                    Location childPath = n.path / e.name; Id child = 0;
                     auto old = oldChildren.find(childPath); if (old != oldChildren.end()) child = old->second;
                     if (!child) { TreeNode c; c.id = next_++; c.parent = n.id; c.path = childPath; c.link = e.link; child = c.id; t->tree.emplace(c.id,std::move(c)); }
                     else t->tree.at(child).link = e.link;
@@ -244,6 +265,7 @@ Result Core::execute(const Command& c) {
     Result r;
     switch (c.action) {
     case Action::SessionGet: case Action::CapabilitiesGet: return {};
+    case Action::ConnectionsGet: r.connections = ssh_hosts(); return r;
     case Action::JobGet: return job(c.job) ? Result{} : Result{{"not_found","Job expired or unknown"}};
     case Action::SessionSave: r.save = true; return r;
     case Action::BookmarkAdd: {
@@ -266,7 +288,7 @@ Result Core::execute(const Command& c) {
     case Action::TabCreate: {
         if (panel.tabs.size() >= 32) return {{"resource_limit","Maximum 32 tabs per panel"}};
         Tab fresh; fresh.id = next_++;
-        fresh.path = !c.path.empty() ? c.path : t ? t->path : fs::current_path();
+        fresh.path = !c.path.empty() ? c.path : t ? t->path : Location(fs::current_path());
         if (t) fresh.options = t->options;
         init_tree(fresh); panel.active = fresh.id; panel.tabs.push_back(std::move(fresh));
         return navigate(c.panel,panel.tabs.back(),panel.tabs.back().path);
@@ -317,6 +339,7 @@ Result Core::execute(const Command& c) {
         case Action::TreeReveal: reveal(*t,c.path.empty() ? t->path : c.path); break;
         case Action::SelectionSet: {
             if (!t->snapshot || t->snapshot->id != c.snapshot) return {{"stale_snapshot","Selection snapshot has changed"}};
+            if (t->selection == c.selection && t->focus == c.focus) return {};
             size_t found = 0; bool focusFound = c.focus.empty();
             for (const auto& e : t->snapshot->entries) {
                 if (c.selection.count(e.name)) ++found;
@@ -339,30 +362,48 @@ Result Core::execute(const Command& c) {
             } catch (const std::exception&) { return {{"invalid_argument","Invalid selection pattern encoding"}}; }
             t->selection = std::move(selected); break;
         }
-        case Action::ViewportSet: t->anchor = c.anchor; break;
+        case Action::ViewportSet: if (t->anchor == c.anchor) return {}; t->anchor = c.anchor; break;
         case Action::SortSet: case Action::FilterSet:
             t->options = c.options; if (c.action == Action::FilterSet) init_tree(*t);
             return navigate(c.panel,*t,t->path,-1,true);
         case Action::JobCancel:
+            if (c.job) { auto it = jobs_.find(c.job); if (it != jobs_.end() && it->second.cancel && it->second.state == JobState::Running) { it->second.cancel->store(true); it->second.state = JobState::Cancelled; } break; }
             cancel(*t); t->error = {"cancelled","Navigation cancelled"};
             for (auto& kv : t->tree) if (kv.second.load == Load::Loading) {
                 kv.second.cancel->store(true); kv.second.load = Load::Unloaded;
             }
             break;
-        case Action::FileView: case Action::FileEdit:
+        case Action::FileCopy: case Action::FileView: case Action::FileEdit: {
             if (!t->snapshot || c.snapshot != t->snapshot->id) return {{"stale_snapshot","File listing changed"}};
-            for (const auto& e : t->snapshot->entries) if (e.name == c.path && !e.directory) { r.launchPath = t->path / e.name; r.viewOnly = c.action == Action::FileView; return r; }
-            return {{"not_found","Select a file to edit"}};
+            if (c.action == Action::FileEdit && t->path.is_remote()) return {{"unsupported","Remote edit/upload-on-save is not available. F3 stages a local view; F5 copies files."}};
+            Work w; w.panel = c.panel; w.tab = t->id;
+            w.kind = c.action == Action::FileCopy ? Work::Copy : Work::View;
+            const auto* target = tab(1-c.panel); if (target) w.destination = target->path;
+            for (const auto& e : t->snapshot->entries) {
+                bool selected = c.action == Action::FileCopy && !t->selection.empty() ? t->selection.count(e.name) != 0 : Location(e.name) == c.path;
+                if (!selected) continue;
+                if (c.action != Action::FileCopy && e.directory) continue;
+                auto source = t->path/e.name;
+                if (!source.is_remote() && c.action != Action::FileCopy) { r.launchPath = source; r.viewOnly = c.action == Action::FileView; return r; }
+                w.sources.push_back(source);
+            }
+            if (w.sources.empty()) return {{"not_found","Select an entry first"}};
+            w.job = next_++; w.cancel = std::make_shared<std::atomic<bool>>(false); w.bytes = std::make_shared<std::atomic<uint64_t>>(0);
+            Job j; j.id = w.job; j.cancel = w.cancel; j.bytes = w.bytes; jobs_[w.job] = j; r.job = w.job; prune_jobs();
+            if (!submit(std::move(w))) { jobs_.erase(r.job); return {{"resource_limit","Job queue full"}}; }
+            ++state_.revision; return r;
+        }
         default: return {{"unsupported","Command not implemented"}};
         }
     }
     ++state_.revision;
     return r;
 }
-void Core::start(const fs::path& left, const fs::path& right) {
+void Core::start(const Location& left, const Location& right) {
     for (int p = 0; p < 2; ++p) { Command c; c.action = Action::TabCreate; c.panel = p; c.path = p ? right : left; execute(c); }
 }
 bool Core::busy() const {
+    for (const auto& item : jobs_) if (item.second.bytes && item.second.state == JobState::Running) return true;
     for (const auto& p : state_.panels) for (const auto& t : p.tabs) {
         if (t.loading) return true;
         for (const auto& kv : t.tree) if (kv.second.load == Load::Loading) return true;

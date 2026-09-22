@@ -17,3 +17,5 @@ Build: `build.bat`. Run: `build\aicmd.exe`. Linux checks: `ssh ai`, work under `
 Development is tracked at https://github.com/juricap/aicmd on main.
 
 - [Viewer plugins and remote filesystems](docs/Plugins-and-remote-filesystems.md)
+
+- [SSH browsing, viewing and copying](docs/SSH.md)

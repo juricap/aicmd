@@ -1,6 +1,6 @@
 # Plugins, viewer formats, and remote filesystems
 
-2026-09-21 — design contract and delivery plan; plugin runtime and remote providers are **not implemented**. User explicitly requested image viewing and remote browsing via SSH/FTP/CIFS. [Main design](Design.md), [todos](../todos/M1-Windows.md).
+2026-09-21 — design contract and delivery plan; plugin runtime and additional remote providers remain planned. A built-in SSH/SFTP provider was implemented on 2026-09-22; see [current SSH implementation](SSH.md). User explicitly requested image viewing and remote browsing via SSH/FTP/CIFS. [Main design](Design.md), [todos](../todos/M1-Windows.md).
 
 ## Two distinct extension points
 

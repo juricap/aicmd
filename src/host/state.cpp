@@ -20,6 +20,10 @@ static Json encode_path(const fs::path& path) {
     }
     return {{"text",display_path(path)},{"native",raw}};
 }
+static Json encode_path(const Location& path) {
+    if (path.is_remote()) return {{"provider","ssh"},{"host",path.host},{"path",path.remote}};
+    return encode_path(path.local);
+}
 static fs::path decode_path(const Json& j) {
     auto raw = j.at("native").get<std::string>();
     constexpr size_t width = sizeof(fs::path::value_type)*2;
@@ -36,6 +40,10 @@ static fs::path decode_path(const Json& j) {
         out += static_cast<fs::path::value_type>(unit);
     }
     return fs::path(out);
+}
+static Location decode_location(const Json& j) {
+    if (j.value("provider",std::string{}) == "ssh") return Location::ssh(j.at("host").get<std::string>(),j.at("path").get<std::string>());
+    return decode_path(j);
 }
 static Json encode(const SavedState& s) {
     Json j = {{"schema",1},{"native_unit_bytes",sizeof(fs::path::value_type)},
@@ -72,7 +80,7 @@ StateLoad load_state(const fs::path& path) {
             const auto& items = j.at("bookmarks");
             if (!items.is_array() || items.size() > 128) throw std::runtime_error("Invalid bookmark count");
             for (const auto& item : items) {
-                auto value = decode_path(item);
+                auto value = decode_location(item);
                 if (!value.is_absolute()) throw std::runtime_error("Bookmark is not absolute");
                 s.bookmarks.push_back(std::move(value));
             }
@@ -86,15 +94,15 @@ StateLoad load_state(const fs::path& path) {
             p.active = src.at("active").get<size_t>(); p.treeVisible = src.at("tree_visible").get<bool>(); p.treeWidth = src.at("tree_width").get<int>();
             if (!src.at("tabs").is_array() || src.at("tabs").empty() || src.at("tabs").size() > 32) throw std::runtime_error("Invalid tab count");
             for (auto& tj : src.at("tabs")) {
-                SavedTab t; t.path = decode_path(tj.at("path"));
+                SavedTab t; t.path = decode_location(tj.at("path"));
                 if (!t.path.is_absolute()) throw std::runtime_error("Session location is not absolute");
                 t.focus = decode_path(tj.at("focus")); t.anchor = decode_path(tj.at("anchor"));
                 int sort = tj.at("sort").get<int>(); if (sort < 0 || sort > 3) throw std::runtime_error("Invalid sort field");
                 t.options = {static_cast<Sort>(sort),tj.at("descending").get<bool>(),tj.at("hidden").get<bool>()};
                 t.historyIndex = tj.at("history_index").get<size_t>();
                 if (!tj.at("history").is_array() || tj.at("history").size() > 100 || !tj.at("expanded").is_array() || tj.at("expanded").size() > 256) throw std::runtime_error("Session history limit exceeded");
-                for (auto& h : tj.at("history")) { auto v = decode_path(h); if (!v.is_absolute()) throw std::runtime_error("Invalid history path"); t.history.push_back(v); }
-                for (auto& h : tj.at("expanded")) { auto v = decode_path(h); if (!v.is_absolute()) throw std::runtime_error("Invalid tree path"); t.expanded.push_back(v); }
+                for (auto& h : tj.at("history")) { auto v = decode_location(h); if (!v.is_absolute()) throw std::runtime_error("Invalid history path"); t.history.push_back(v); }
+                for (auto& h : tj.at("expanded")) { auto v = decode_location(h); if (!v.is_absolute()) throw std::runtime_error("Invalid tree path"); t.expanded.push_back(v); }
                 p.tabs.push_back(std::move(t));
             }
         }

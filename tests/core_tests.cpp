@@ -20,8 +20,8 @@ static void settle(Core& c) {
 class Fake : public Provider {
 public:
     std::atomic<int> entered{0};
-    std::vector<fs::path> roots() override { return {fs::current_path().root_path()}; }
-    Listing list(const fs::path& p,bool dirs,const Cancel&,size_t) override {
+    std::vector<Location> roots() override { return {fs::current_path().root_path()}; }
+    Listing list(const Location& p,bool dirs,const Cancel&,size_t) override {
         if (p.filename() == "slow") { ++entered; std::this_thread::sleep_for(std::chrono::milliseconds(150)); }
         if (p.filename() == "denied") return {{},{"access_denied","Test denial"}};
         Listing r; Entry e; e.id = 1; e.name = dirs ? fs::path("child") : p.filename(); e.directory = dirs; r.entries.push_back(e); r.bytes = 256; return r;

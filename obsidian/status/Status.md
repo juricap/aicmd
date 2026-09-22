@@ -1,6 +1,6 @@
 # Status
 
-2026-09-21 — v0.1.0 development. First usable compact Windows browser implemented and validated. Broader M1 acceptance items remain in the todo list.
+2026-09-22 — v0.1.0 development. First usable compact Windows browser implemented and validated. Broader M1 acceptance items remain in the todo list.
 
 [Home](../Home.md), [todos](../todos/M1-Windows.md), [design](../docs/Design.md).
 
@@ -33,7 +33,7 @@ Reproduce: `build.bat`, `scripts/test-gui.ps1`, `scripts/benchmark.ps1`, `script
 
 ## Limits
 
-No file mutation, TUI, production model transport, macOS/Linux GUI, or image viewer plugins yet. Listings publish only when enumeration and sorting complete. Network cancellation is cooperative; blocked OS I/O can delay shutdown. Per-directory budget is 32 MiB; retained listing budget is approximately 128 MiB. These are estimates of listing storage, not process RSS guarantees.
+No move/delete/overwrite, TUI, production model transport, macOS/Linux GUI, or image viewer plugins yet. Listings publish only when enumeration and sorting complete. Network cancellation is cooperative; blocked OS I/O can delay shutdown. Per-directory budget is 32 MiB; retained listing budget is approximately 128 MiB. These are estimates of listing storage, not process RSS guarantees.
 
 ## Repository
 
@@ -41,10 +41,18 @@ GitHub: https://github.com/juricap/aicmd, branch main. Source, tests, vendored J
 
 ## Viewer and selection update
 
-F3 now uses jptxt protocol 2 in enforced read-only mode; F4 in jptxt enables text editing in place. Ctrl+A and keypad select/unselect/invert route through the shared core. Marks use red text with an independent full-row highlighted cursor. Native smoke covers wildcard masks and focus return from the dialog. Image and remote filesystem plugins are design work only; see [plan](../docs/Plugins-and-remote-filesystems.md). The binary measurements above describe the initial browsing baseline, before this update.
+F3 now uses jptxt protocol 2 in enforced read-only mode; F4 in jptxt enables text editing in place. Ctrl+A and keypad select/unselect/invert route through the shared core. Marks use red text with an independent full-row highlighted cursor. Native smoke covers wildcard masks and focus return from the dialog. Image plugins and additional remote protocols remain design work; SSH/SFTP is now built in; see [plan](../docs/Plugins-and-remote-filesystems.md). The binary measurements above describe the initial browsing baseline, before this update.
 
 Actual Windows F3 handoff passed with a spaced filename, using the sibling jptxt binary. Its separate viewer suite passes 29 checks on Windows/Linux and native GUI tests for read-only enforcement, same-tab editing, and single-instance delivery. Cocoa changes remain unverified.
 
 ## Full-row cursor, bookmarks and drives
 
 Restored the full-row dark cursor highlight to match the reference, with red text retained for marks. Ctrl+D opens the saved-folder menu; Alt+F1/F2 opens current Windows drive letters for the left/right panel. Bookmark add/remove commands belong to the shared core and persist as an optional schema-1 field, preserving compatibility with old sessions. Native GUI smoke exercises bookmark creation and drive selection through the real popup menus. Windows/Linux core tests pass 58 checks; the full-row cursor screenshot was inspected.
+
+## SSH and redraw update (2026-09-22)
+
+Removed layout, unchanged label/header updates and whole-list invalidation from cursor movement. Native smoke verifies 100 arrow movements invoke no layout passes. Full-row cursor and independent red marks remain.
+
+Added real SSH config discovery to drive menus, typed remote locations, persistent SFTP browsing and pipelined view/copy jobs. Windows and Linux pass 58 core + 14 offline SSH/copy checks. Live Windows-to-ai testing passes 45 checks; actual GUI remote F3 and F5 also pass. The 8 MiB upload/download roundtrip was byte-exact and took about 1.8 seconds including connection startup. Current Linux checkout: /data/devel/aicmd-check-20260922. See [SSH](../docs/SSH.md) for authentication, overwrite, staging and remote-edit limitations.
+
+Current release build: aicmd.exe 755,200 bytes; CLI 526,848 bytes. The table above remains the initial baseline.

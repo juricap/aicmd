@@ -24,3 +24,7 @@ Sibling jptxt viewer implementation committed locally as 132e5df (not pushed). A
 ## 2026-09-21: full-row cursor and folder navigation
 
 User clarified that the cursor should highlight the full row. Implemented dark full-row focus with independent red marks, Ctrl+D folder hotlist with add/remove, and Alt+F1/F2 Windows drive selection. Bookmarks persist and remain available when starting with explicit paths. Verified 58 Windows/Linux core checks, native popup-menu routes and selection screenshot.
+
+## 2026-09-22: SSH browsing and transfers; cursor redraw fix
+
+Removed relayout/unchanged-control repaint from cursor movement and limited row invalidation. Added Location boundaries, OpenSSH-backed SFTP v3, config/Include discovery, persistent browse/read/write lanes, bounded pipelined transfer, F3 caching and F5 recursive copy with exclusive staging/publication. Remote keys remain with OpenSSH. Windows/Linux offline suites pass; live ai tests cover byte-exact Unicode transfers, non-overwrite, cancellation and reconnection. Native GUI F3/F5 passed. See SSH documentation for intentionally unimplemented remote save, overwrites, metadata preservation and cache cleanup.

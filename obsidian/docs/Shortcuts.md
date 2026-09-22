@@ -21,7 +21,7 @@
 | Escape | Cancel navigation (or cancel path edit) |
 | Alt+F4 | Exit and save session |
 
-F3 opens jptxt read-only; F4 inside jptxt enables editing without restarting. F5–F8 are reserved for later file operations; they do not perform those operations yet.
+F3 opens jptxt read-only; F4 inside jptxt enables editing without restarting. F5 copies to the other panel; F6-F8 remain reserved.
 
 | Selection key | Action |
 |---|---|
@@ -37,3 +37,5 @@ Marks use red text; the full-row highlighted cursor moves independently. Masks s
 | Alt+F1 / Alt+F2 | Choose a Windows drive for the left / right panel |
 
 Drive letters and bookmark numbers are menu accelerators; arrows/Enter select and Escape cancels. Bookmarks persist with the session and are shared by both panels.
+
+SSH: Alt+F1/F2 -> SSH -> alias. Ctrl+L accepts ssh://alias/path. F3 downloads a cached read-only view; Enter on a remote file also views. F5 copies marks or focus to the opposite panel after confirmation; Escape cancels a transfer. Remote editing/upload-on-save is not available yet.

@@ -1,5 +1,6 @@
 #include "core/core.h"
 #include "host/state.h"
+#include "fs/ssh.h"
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -23,6 +24,8 @@ struct Pane {
     bool selectionDirty = false;
     bool editingPath = false;
     int listWidth = 0;
+    bool active = false;
+    size_t files = 0, dirs = 0;
 };
 struct App {
     Core core;
@@ -42,6 +45,10 @@ struct App {
     std::wstring selectionMask = L"*";
     bool selectionDirectories = true;
     bool locationMenuOpen = false;
+    std::vector<std::string> sshHosts;
+    Id transfer = 0;
+    bool transferIsCopy = false;
+    int layoutPasses = 0;
     int drag = -1;
     RECT divider{};
     int width = 1200, height = 760;
@@ -56,7 +63,7 @@ std::wstring wide(const std::string& s) {
     int n = MultiByteToWideChar(CP_UTF8,0,s.data(),static_cast<int>(s.size()),nullptr,0);
     std::wstring out(n,L' '); if (n) MultiByteToWideChar(CP_UTF8,0,s.data(),static_cast<int>(s.size()),out.data(),n); return out;
 }
-std::wstring shown(const fs::path& p) { return wide(display_path(p)); }
+std::wstring shown(const Location& p) { return wide(display_path(p)); }
 std::wstring text(HWND h) { int n = GetWindowTextLengthW(h); std::wstring s(n+1,L'\0'); GetWindowTextW(h,s.data(),n+1); s.resize(n); return s; }
 const Tab* current(int p) { return app->core.tab(p); }
 void render();
@@ -64,8 +71,13 @@ void layout();
 void save();
 void run_command(Command c);
 void capture(int p);
+void redraw_row(HWND list,int row) {
+    if (row < 0) return;
+    RECT rect{}, client{};
+    if (ListView_GetItemRect(list,row,&rect,LVIR_BOUNDS)) { GetClientRect(list,&client); rect.right = client.right; InvalidateRect(list,&rect,FALSE); }
+}
 void activate(int p);
-std::wstring menu_path(const fs::path& path) {
+std::wstring menu_path(const Location& path) {
     auto value = shown(path); std::wstring out;
     for (auto c : value) { out += c; if (c == L'&') out += c; }
     return out;
@@ -73,7 +85,7 @@ std::wstring menu_path(const fs::path& path) {
 void location_menu(int p,bool drives) {
     capture(p); activate(p);
     auto menu = CreatePopupMenu();
-    std::vector<fs::path> locations;
+    std::vector<Location> locations;
     if (drives) {
         wchar_t buffer[512]{};
         DWORD length = GetLogicalDriveStringsW(512,buffer);
@@ -82,6 +94,16 @@ void location_menu(int p,bool drives) {
             std::wstring label = L"&"; label += s[0]; label += L":\\";
             AppendMenuW(menu,MF_STRING,100+locations.size()-1,label.c_str());
         }
+        Command discover; discover.action = Action::ConnectionsGet;
+        app->sshHosts = app->core.execute(discover).connections; // Re-read config and Include files whenever the menu opens.
+        auto ssh = CreatePopupMenu();
+        for (const auto& host : app->sshHosts) {
+            locations.push_back(Location::ssh(host));
+            AppendMenuW(ssh,MF_STRING,100+locations.size()-1,wide(host).c_str());
+        }
+        if (app->sshHosts.empty()) AppendMenuW(ssh,MF_STRING|MF_GRAYED,0,L"No hosts in ~/.ssh/config");
+        AppendMenuW(menu,MF_SEPARATOR,0,nullptr);
+        AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(ssh),L"&SSH");
     } else {
         locations = app->core.state().bookmarks;
         AppendMenuW(menu,MF_STRING,1,L"&Add current folder");
@@ -151,7 +173,7 @@ void edit_path(int p) {
     auto& v = app->panes[p];
     v.editingPath = true;
     ShowWindow(v.pathLabel,SW_HIDE); ShowWindow(v.path,SW_SHOW);
-    SetWindowTextW(v.path,current(p)->path.c_str());
+    SetWindowTextW(v.path,current(p)->path.native().c_str());
     SetFocus(v.path); SendMessageW(v.path,EM_SETSEL,0,-1);
 }
 void end_path(int p) {
@@ -216,7 +238,11 @@ void launch_editor(const fs::path& file,bool viewOnly) {
 void run_command(Command c) {
     auto r = app->core.execute(c);
     if (r.error) app->notice = wide(r.error.message);
-    else { app->notice.clear(); if (!r.launchPath.empty()) launch_editor(r.launchPath,r.viewOnly); }
+    else { app->notice.clear(); if (!r.launchPath.empty()) launch_editor(r.launchPath.local,r.viewOnly); }
+    if (!r.error && r.job && (c.action == Action::FileCopy || c.action == Action::FileView)) {
+        app->transfer = r.job; app->transferIsCopy = c.action == Action::FileCopy;
+        app->notice = L"Transferring... Escape cancels.";
+    }
     if (r.save) save();
     if (app->core.state().quit) PostMessageW(app->window,WM_CLOSE,0,0);
     app->dirty = true;
@@ -224,11 +250,16 @@ void run_command(Command c) {
 void action(Action a, int p = -1) {
     if (p < 0) p = app->core.state().activePanel;
     capture(p);
+    if ((a == Action::FileCopy || a == Action::FileView) && app->transfer) { app->notice = L"Wait for the current transfer, or Escape to cancel."; return; }
+    if (a == Action::FileCopy) {
+        auto prompt = L"Copy marked entries (or the focused entry) to:\n"+shown(current(1-p)->path)+L"\n\nExisting destinations will not be overwritten.";
+        if (MessageBoxW(app->window,prompt.c_str(),L"Copy - F5",MB_OKCANCEL|MB_ICONQUESTION) != IDOK) return;
+    }
     Command c; c.action = a; c.panel = p;
     if (const auto* t = current(p)) {
         c.tab = t->id; c.options = t->options;
         if (a == Action::FilterSet) c.options.hidden = !c.options.hidden;
-        if (a == Action::FileEdit || a == Action::FileView) { c.path = t->focus; c.snapshot = t->snapshot ? t->snapshot->id : 0; }
+        if (a == Action::FileEdit || a == Action::FileView || a == Action::FileCopy) { c.path = t->focus; c.snapshot = t->snapshot ? t->snapshot->id : 0; }
         if (a == Action::PanelConfigure) { auto& panel = app->core.state().panels[p]; c.flag = !panel.treeVisible; c.value = panel.treeWidth; }
     }
     run_command(c);
@@ -240,7 +271,7 @@ void open_item(int p) {
     if (!v.snapshot || row < 1 || static_cast<size_t>(row-1) >= v.snapshot->entries.size()) return;
     const auto& e = v.snapshot->entries[row-1];
     Command c; c.panel = p; c.tab = v.tab; c.snapshot = v.snapshot->id;
-    c.action = e.directory ? Action::Navigate : Action::FileEdit;
+    c.action = e.directory ? Action::Navigate : v.snapshot->path.is_remote() ? Action::FileView : Action::FileEdit;
     c.path = e.directory ? v.snapshot->path / e.name : e.name;
     run_command(c);
 }
@@ -286,6 +317,7 @@ void menu() {
     auto add = [](HMENU m,Action a,const wchar_t* label){AppendMenuW(m,MF_STRING,MENU_BASE+static_cast<UINT>(a),label);};
     HMENU file = CreatePopupMenu(); add(file,Action::FileEdit,L"&Edit in jptxt\tF4");
     add(file,Action::FileView,L"Read-only &viewer\tF3");
+    add(file,Action::FileCopy,L"&Copy to other panel\tF5");
     AppendMenuW(file,MF_SEPARATOR,0,nullptr); add(file,Action::SessionSave,L"&Save session"); add(file,Action::AppQuit,L"E&xit");
     HMENU view = CreatePopupMenu(); add(view,Action::Refresh,L"&Refresh / Retry\tCtrl+R"); add(view,Action::FilterSet,L"Show &hidden files\tCtrl+H");
     HMENU tabs = CreatePopupMenu(); add(tabs,Action::TabCreate,L"&New tab\tCtrl+T"); add(tabs,Action::TabClose,L"&Close tab\tCtrl+W"); add(tabs,Action::TabCycle,L"Ne&xt tab\tCtrl+Tab");
@@ -293,6 +325,7 @@ void menu() {
     SetMenu(app->window,bar);
 }
 void layout() {
+    ++app->layoutPasses;
     RECT r{}; GetClientRect(app->window,&r);
     int bottom = r.bottom-px(20), gap = px(4);
     MoveWindow(app->status,px(3),bottom+px(2),r.right-px(6),px(18),TRUE);
@@ -322,7 +355,7 @@ void render() {
         const auto& panel = app->core.state().panels[p];
         std::vector<Id> ids; std::vector<std::wstring> labels;
         for (const auto& tab : panel.tabs) {
-            ids.push_back(tab.id); auto label = shown(tab.path.filename().empty() ? tab.path : tab.path.filename());
+            ids.push_back(tab.id); auto label = shown(tab.path.filename().empty() ? tab.path : Location(tab.path.filename()));
             if (tab.loading) label += L" ..."; if (tab.error) label += L" !"; labels.push_back(label);
         }
         if (ids != v.tabIds || labels != v.tabLabels) {
@@ -331,17 +364,22 @@ void render() {
             v.tabIds = ids; v.tabLabels = labels;
             SendMessageW(v.tabs,WM_SETREDRAW,TRUE,0); InvalidateRect(v.tabs,nullptr,TRUE);
         }
-        auto selected = std::find(ids.begin(),ids.end(),t->id); TabCtrl_SetCurSel(v.tabs,static_cast<int>(selected-ids.begin()));
+        auto selected = std::find(ids.begin(),ids.end(),t->id);
+        int selectedIndex = static_cast<int>(selected-ids.begin());
+        if (TabCtrl_GetCurSel(v.tabs) != selectedIndex) TabCtrl_SetCurSel(v.tabs,selectedIndex);
         if (switched || GetFocus() != v.path) {
             auto path = t->loading ? t->requested : t->path;
             auto native = path.native(); if (text(v.path) != native) SetWindowTextW(v.path,native.c_str());
         }
         auto bar = L" " + shown(t->loading ? t->requested : t->path);
         if (t->loading) bar += L"  [loading]";
-        SetWindowTextW(v.pathLabel,bar.c_str());
-        InvalidateRect(v.pathLabel,nullptr,TRUE);
+        bool active = p == app->core.state().activePanel;
+        if (text(v.pathLabel) != bar) SetWindowTextW(v.pathLabel,bar.c_str());
+        if (v.active != active) { v.active = active; InvalidateRect(v.pathLabel,nullptr,FALSE); InvalidateRect(v.list,nullptr,FALSE); }
         if (switched || v.snapshot != t->snapshot) {
             v.tab = t->id; v.snapshot = t->snapshot;
+            v.files = v.dirs = 0;
+            if (t->snapshot) for (const auto& e : t->snapshot->entries) { if (e.directory) ++v.dirs; else ++v.files; }
             SendMessageW(v.list,WM_SETREDRAW,FALSE,0);
             ListView_SetItemState(v.list,-1,0,LVIS_SELECTED|LVIS_FOCUSED);
             int count = v.snapshot ? static_cast<int>(v.snapshot->entries.size())+1 : 0;
@@ -362,28 +400,25 @@ void render() {
             } else ListView_EnsureVisible(v.list,focus,FALSE);
             SendMessageW(v.list,WM_SETREDRAW,TRUE,0); InvalidateRect(v.list,nullptr,TRUE);
         }
-        size_t files = 0, dirs = 0;
-        if (t->snapshot) for (const auto& e : t->snapshot->entries) { if (e.directory) ++dirs; else ++files; }
-        std::wstring summary = std::to_wstring(t->selection.size())+L" selected / "+std::to_wstring(files)+L" file(s), "+std::to_wstring(dirs)+L" dir(s)";
+        std::wstring summary = std::to_wstring(t->selection.size())+L" selected / "+std::to_wstring(v.files)+L" file(s), "+std::to_wstring(v.dirs)+L" dir(s)";
         if (t->error) summary = wide(t->error.message)+L"  |  Ctrl+R Retry";
-        SetWindowTextW(v.summary,summary.c_str());
-        InvalidateRect(v.list,nullptr,FALSE);
+        if (text(v.summary) != summary) SetWindowTextW(v.summary,summary.c_str());
         HWND header = ListView_GetHeader(v.list);
         for (int i = 0; i < 5; ++i) {
             HDITEMW item{}; item.mask = HDI_FORMAT; Header_GetItem(header,i,&item);
+            int previous = item.fmt;
             item.fmt &= ~(HDF_SORTUP|HDF_SORTDOWN);
             if (i == static_cast<int>(t->options.sort)) item.fmt |= t->options.descending ? HDF_SORTDOWN : HDF_SORTUP;
-            Header_SetItem(header,i,&item);
+            if (previous != item.fmt) Header_SetItem(header,i,&item);
         }
     }
     const auto* t = current(app->core.state().activePanel);
     std::wstring status = app->notice;
     if (status.empty() && t && t->error) status = wide(t->error.message)+L"   |   Ctrl+R Retry";
-    if (status.empty()) status = L"F3 View   F4 Edit   Tab Panel   Insert Mark   Num+ Select   Num- Unselect   Ctrl+T New tab   Ctrl+L Path   Ctrl+R Refresh";
-    SetWindowTextW(app->status,status.c_str());
+    if (status.empty()) status = L"F3 View   F4 Edit   F5 Copy   Tab Panel   Insert Mark   Num+ Select   Num- Unselect   Ctrl+D Bookmarks   Alt+F1/F2 Drives/SSH";
+    if (text(app->status) != status) SetWindowTextW(app->status,status.c_str());
     CheckMenuItem(GetMenu(app->window),MENU_BASE+static_cast<UINT>(Action::FilterSet),MF_BYCOMMAND|(t && t->options.hidden ? MF_CHECKED : MF_UNCHECKED));
     app->syncing = false; app->seen = app->core.state().revision; app->renderedNotice = app->notice;
-    layout();
 }
 std::wstring cell(const Entry& e,int column) {
     if (column == 0) return e.directory ? L"["+shown(e.name)+L"]" : shown(e.name.has_extension() ? e.name.stem() : e.name);
@@ -445,6 +480,7 @@ LRESULT notify(NMHDR* hdr) {
                 if (hdr->code == NM_SETFOCUS) activate(p);
                 if (hdr->code == NM_DBLCLK) open_item(p);
                 if (hdr->code == LVN_ITEMCHANGED || hdr->code == LVN_ODSTATECHANGED) v.selectionDirty = true;
+                if (hdr->code == LVN_ITEMCHANGED) redraw_row(v.list,reinterpret_cast<NMLISTVIEW*>(hdr)->iItem);
                 if (hdr->code == LVN_COLUMNCLICK) {
                     if (reinterpret_cast<NMLISTVIEW*>(hdr)->iSubItem >= 4) return 0;
                     capture(p); Command c; c.action = Action::SortSet; c.panel = p; c.options = current(p)->options;
@@ -491,7 +527,7 @@ bool key(MSG& msg,int testModifiers = -1) {
         if (msg.wParam == VK_INSERT && row+1 < ListView_GetItemCount(v.list)) {
             ListView_SetItemState(v.list,row+1,LVIS_FOCUSED,LVIS_FOCUSED); ListView_EnsureVisible(v.list,row+1,FALSE);
         }
-        v.selectionDirty = true; InvalidateRect(v.list,nullptr,FALSE); return true;
+        v.selectionDirty = true; redraw_row(v.list,row); redraw_row(v.list,row+1); return true;
     }
     if (focus == v.list && !ctrl && !alt && (msg.wParam == VK_UP || msg.wParam == VK_DOWN || msg.wParam == VK_HOME || msg.wParam == VK_END || msg.wParam == VK_PRIOR || msg.wParam == VK_NEXT)) {
         int row = ListView_GetNextItem(v.list,-1,LVNI_FOCUSED), count = ListView_GetItemCount(v.list);
@@ -503,7 +539,7 @@ bool key(MSG& msg,int testModifiers = -1) {
         next = std::clamp(next,0,count-1);
         if (shift && row > 0) ListView_SetItemState(v.list,row,LVIS_SELECTED,LVIS_SELECTED);
         ListView_SetItemState(v.list,next,LVIS_FOCUSED,LVIS_FOCUSED); ListView_EnsureVisible(v.list,next,FALSE);
-        v.selectionDirty = true; InvalidateRect(v.list,nullptr,FALSE); return true;
+        v.selectionDirty = true; redraw_row(v.list,row); redraw_row(v.list,next); return true;
     }
     if (ctrl && msg.wParam == 'A' && focus == v.list) { mark_pattern(p,1,false); return true; }
     if (focus == v.list && msg.wParam == VK_ADD) { mark_pattern(p,1,!shift); return true; }
@@ -511,7 +547,8 @@ bool key(MSG& msg,int testModifiers = -1) {
     if (focus == v.list && msg.wParam == VK_MULTIPLY) { mark_pattern(p,0,false); return true; }
     if (msg.wParam == VK_F4 && !alt) { action(Action::FileEdit,p); return true; }
     if (msg.wParam == VK_F3) { action(Action::FileView,p); return true; }
-    if (msg.wParam == VK_ESCAPE) { if (focus == v.path) end_path(p); else action(Action::JobCancel,p); return true; }
+    if (msg.wParam == VK_F5) { action(Action::FileCopy,p); return true; }
+    if (msg.wParam == VK_ESCAPE) { if (focus == v.path) end_path(p); else if (app->transfer) { Command c; c.action = Action::JobCancel; c.panel = p; c.job = app->transfer; run_command(c); } else action(Action::JobCancel,p); return true; }
     return false;
 }
 void save() {
@@ -561,6 +598,9 @@ void smoke() {
         check(app->core.state().panels[1].tabs.size() == 1);
         check(current(1)->path == fs::current_path());
         HWND list = app->panes[1].list; SetFocus(list);
+        int layouts = app->layoutPasses;
+        for (int i = 0; i < 50; ++i) { press(VK_DOWN); capture(1); render(); press(VK_UP); capture(1); render(); }
+        check(app->layoutPasses == layouts);
         ListView_SetItemState(list,-1,0,LVIS_SELECTED|LVIS_FOCUSED);
         ListView_SetItemState(list,1,LVIS_FOCUSED,LVIS_FOCUSED);
         press(VK_INSERT); press(VK_DOWN);
@@ -602,6 +642,20 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
     case WM_TIMER:
         for (int p = 0; p < 2; ++p) if (app->panes[p].selectionDirty) capture(p);
         if (app->core.poll()) app->dirty = true;
+        for (const auto& path : app->core.take_viewers()) {
+            launch_editor(path,true);
+            app->notice = L"Remote file staged read-only in jptxt. Editing this local copy does not upload changes.";
+        }
+        if (app->transfer) {
+            const auto* job = app->core.job(app->transfer);
+            if (job && job->state == JobState::Running) app->notice = L"Transfer: "+std::to_wstring(job->bytes ? job->bytes->load() : 0)+L" bytes | Escape cancels";
+            else {
+                if (job && job->error) app->notice = wide(job->error.message)+L" (completed files remain; a remote .aicmd-part file may need cleanup after disconnect)";
+                else if (job && job->state == JobState::Cancelled) app->notice = L"Transfer cancelled; completed files remain.";
+                else if (app->transferIsCopy) { app->notice = L"Copy complete."; for (int p = 0; p < 2; ++p) { Command c; c.action = Action::Refresh; c.panel = p; app->core.execute(c); } }
+                app->transfer = 0;
+            }
+        }
         if (app->seen != app->core.state().revision || app->notice != app->renderedNotice) render();
         if (app->dirty && !app->core.busy() && GetTickCount64()-app->lastSave > 3000) save();
         smoke(); return 0;
@@ -655,10 +709,11 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int show) {
     try {
         app = std::make_unique<App>();
+        app->sshHosts = ssh_hosts();
         app->statePath = default_state_path();
         if (auto e = _wgetenv(L"AICMD_EDITOR")) app->editor = e;
         int argc = 0; auto argv = CommandLineToArgvW(GetCommandLineW(),&argc);
-        fs::path left = fs::current_path(), right = left; bool explicitPaths = false;
+        Location left = fs::current_path(), right = left; bool explicitPaths = false;
         for (int i = 1; i < argc; ++i) {
             std::wstring arg = argv[i];
             if ((arg == L"--session" || arg == L"--editor" || arg == L"--smoke") && i+1 < argc) {
@@ -666,7 +721,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int show) {
                 if (arg == L"--session") app->statePath = value;
                 if (arg == L"--editor") app->editor = value;
                 if (arg == L"--smoke") { app->smokePath = value; app->statePath = value; app->statePath += L".session.json"; explicitPaths = true; }
-            } else if (!arg.empty() && arg[0] != L'-') { if (!explicitPaths) left = right = absolute_path(arg,fs::current_path()); else right = absolute_path(arg,fs::current_path()); explicitPaths = true; }
+            } else if (!arg.empty() && arg[0] != L'-') { if (!explicitPaths) left = right = absolute_path(Location(fs::path(arg)),Location(fs::current_path())); else right = absolute_path(Location(fs::path(arg)),Location(fs::current_path())); explicitPaths = true; }
             else throw std::runtime_error("Usage: aicmd [left-directory] [right-directory] [--session file] [--editor jptxt.exe]");
         }
         LocalFree(argv);
