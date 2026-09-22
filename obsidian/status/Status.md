@@ -58,3 +58,5 @@ Added real SSH config discovery to drive menus, typed remote locations, persiste
 Current release build: aicmd.exe 755,200 bytes; CLI 526,848 bytes. The table above remains the initial baseline.
 
 Viewer-return keyboard fix: the active window now restores its panel input control. Verified actual navigation after closing local and SSH jptxt views, plus path-editor/tab preservation. Updated scripts/test-viewer.ps1 and scripts/test-ssh-gui.ps1 use scripts/assert-navigation.ps1 to check row movement, not merely foreground state.
+
+Media planning: [design](../docs/Media-viewer.md) complete for a separate optional aiview executable backed by libmpv. Covers JPEG/PNG, MP4/audio, folder keys, frame stepping, SSH random-access input, command API and validation gates. Implementation has not started; existing Space behavior is unchanged until the integration milestone.

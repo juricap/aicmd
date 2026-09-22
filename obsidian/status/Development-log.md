@@ -32,3 +32,7 @@ Removed relayout/unchanged-control repaint from cursor movement and limited row 
 ## 2026-09-22: keyboard routing after closing the viewer
 
 Fixed the active-window/child-input mismatch after returning from jptxt. Remember the panel control on deactivation, restore it when the top-level window receives focus, and recover navigation routing if focus lands on the main window. Preserve path editing and tab focus. Local and SSH viewer tests now close jptxt and assert actual Home/Down/Up/Down cursor movement; the SSH test continues through F5. Native smoke covers right-panel input restoration, unfinished path editing and tabs. Windows build and both core suites pass.
+
+## 2026-09-22: media viewer design
+
+Researched mpv/libmpv playback, render and stream APIs. Chose an optional standalone C++ player as the proposed first host, with images and MP4 in the first usable release, then aicmd Space integration and seekable SFTP sources. Specified exact navigation/seek/frame keys, marking-key conflict resolution, folder snapshot ordering, focus-return contract, IPC/tool commands, budgets and acceptance tests. Design only; runtime selection still needs the backend spike.

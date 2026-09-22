@@ -2,6 +2,10 @@
 
 2026-09-21 — design contract and delivery plan; plugin runtime and additional remote providers remain planned. A built-in SSH/SFTP provider was implemented on 2026-09-22; see [current SSH implementation](SSH.md). User explicitly requested image viewing and remote browsing via SSH/FTP/CIFS. [Main design](Design.md), [todos](../todos/M1-Windows.md).
 
+## Media plan update (2026-09-22)
+
+The [media viewer design](Media-viewer.md) supersedes the first-image-implementation proposal below: start with standalone aiview using libmpv for stills, video and audio. Keep jptxt for text/hex. The renderer separation remains useful, but a public plugin ABI is deferred until the player and provider-backed streams are validated.
+
 ## Two distinct extension points
 
 1. **jptxt viewer plugins** detect and render content (text, hex, images, later other formats).

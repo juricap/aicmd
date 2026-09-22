@@ -233,3 +233,7 @@ See [Plugins and remote filesystems](Plugins-and-remote-filesystems.md) for imag
 ## Implemented SSH increment (2026-09-22)
 
 See [SSH](SSH.md) for the current built-in SFTP transport and its tested limits. Location now explicitly distinguishes native local paths from SSH alias/POSIX paths. F3 staging and F5 non-overwriting streaming/recursive copy run as shared core jobs. This advances part of the remote-provider and copy milestones; public plugin ABI, remote editing and other mutation policies remain open.
+
+## Media viewer plan (2026-09-22)
+
+[Media-viewer](Media-viewer.md) specifies a standalone C++/libmpv player, Space entry, folder navigation, video/audio seeking and frame stepping, followed by seekable SSH input. This is a plan; no media playback has been implemented. It supersedes the earlier image-first jptxt integration direction.

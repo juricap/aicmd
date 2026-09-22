@@ -54,3 +54,14 @@ First usable implementation is built and validated. Broader acceptance work rema
 - [ ] Live Linux transport and macOS validation, WAN throughput profiling.
 
 - [x] Restore keyboard navigation after external viewer exit; verify local/SSH cursor movement and preserve path-editor/tab input.
+
+## Media viewer (planned)
+
+See [full design](../docs/Media-viewer.md).
+
+- [x] Specify standalone player architecture, keys and SSH streaming contract.
+- [ ] Backend spike: pinned libmpv, JPEG/PNG + MP4/audio, seeks/frame steps, rendering and hardware decode.
+- [ ] Standalone local mixed-folder viewer with requested keyboard controls.
+- [ ] Space launch and folder snapshot IPC; preserve mark commands and keyboard return.
+- [ ] Provider read-at API and bounded, seekable SSH playback.
+- [ ] Fixture/soak tests, dependency packaging and native portability.
