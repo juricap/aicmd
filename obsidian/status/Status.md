@@ -33,7 +33,7 @@ Reproduce: `build.bat`, `scripts/test-gui.ps1`, `scripts/benchmark.ps1`, `script
 
 ## Limits
 
-No move/delete/overwrite, TUI, production model transport, macOS/Linux GUI, or image viewer plugins yet. Listings publish only when enumeration and sorting complete. Network cancellation is cooperative; blocked OS I/O can delay shutdown. Per-directory budget is 32 MiB; retained listing budget is approximately 128 MiB. These are estimates of listing storage, not process RSS guarantees.
+No move/delete/overwrite, TUI, commander model transport, macOS/Linux GUI, or public image viewer plugins yet. Aiview now has its own local media MCP/tool transport. Listings publish only when enumeration and sorting complete. Network cancellation is cooperative; blocked OS I/O can delay shutdown. Per-directory budget is 32 MiB; retained listing budget is approximately 128 MiB. These are estimates of listing storage, not process RSS guarantees.
 
 ## Repository
 
@@ -59,4 +59,12 @@ Current release build: aicmd.exe 755,200 bytes; CLI 526,848 bytes. The table abo
 
 Viewer-return keyboard fix: the active window now restores its panel input control. Verified actual navigation after closing local and SSH jptxt views, plus path-editor/tab preservation. Updated scripts/test-viewer.ps1 and scripts/test-ssh-gui.ps1 use scripts/assert-navigation.ps1 to check row movement, not merely foreground state.
 
-Media planning: [design](../docs/Media-viewer.md) complete for a separate optional aiview executable backed by libmpv. Covers JPEG/PNG, MP4/audio, folder keys, frame stepping, SSH random-access input, command API and validation gates. Implementation has not started; existing Space behavior is unchanged until the integration milestone.
+## aiview implementation (2026-09-22)
+
+Implemented separate native Windows `aiview.exe`, optional pinned libmpv runtime, portable media controller and seekable local/SFTP sources. Space launches media in commander's frozen displayed order; Insert/Shift+Space retain marking. Folder keys, five-second seeks, forward/backward frame stepping, play/pause, zoom, fullscreen and volume controls are implemented. Viewer exit returns the browsed item without losing marks or keyboard navigation.
+
+Ctrl+C/Ctrl+Insert copy full-resolution decoded pixels to Windows clipboard (alpha-capable CF_DIBV5 plus black-composited CF_DIB fallback). Model adapters share typed commands. The user-restricted local pipe and `aiview-tool --mcp` expose playback tools and explicit PNG image capture without touching clipboard or automatically contacting a model. Gemini integration itself remains untested.
+
+Verified: Windows build and 58 core + 14 SSH/copy + 22 media-controller/read-at checks; Linux same suites through `ssh ai` at `/data/devel/aicmd-check-media-20260922`. Native media suite passes **28 checks**, including JPEG/PNG, H.264/AAC with D3D11 decode, HEVC, WAV seek state, CFR/VFR stepping against FFprobe timestamps, EXIF rotation, transparent-image copying, MCP image content and large PNG pipe responses. Remote tail-index MP4 playback/seek/reverse step fetched about 1.8 MB from a roughly 130 MB sparse fixture. Captured frame/PNG pixels were inspected. This is functional LAN validation, not an internet-streaming benchmark.
+
+Standalone and commander Space/mark/current-item/focus tests pass. Existing native GUI, local F3/jptxt and SSH F3/F5/keyboard-return regression scripts also pass. Portable GUI shells, binary redistribution/license manifest, 4K/HDR fidelity and long-run/WAN interruption hardening remain open. Native Windows rendering uses libmpv's `wid`/D3D11 adapter; initial commander attachment uses bounded temporary snapshots and one viewer at a time. Details, reproducible commands, limits and tool contracts: [aiview](../docs/Aiview.md).

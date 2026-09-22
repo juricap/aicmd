@@ -37,7 +37,7 @@ First usable implementation is built and validated. Broader acceptance work rema
 - [ ] M6: Gemini function/Live adapter over the shared commands.
 - [x] Configure GitHub remote and publish main with id_ghjuricap.
 
-- [ ] jptxt image renderer and versioned viewer plugin API.
+- [ ] Versioned viewer plugin API after aiview's backend/provider boundaries are proven (initial media viewer is separate from jptxt).
 - [ ] Provider location refactor, SFTP first, FTP/FTPS and SMB/CIFS adapters; see plugin design.
 
 - [x] Full-row cursor with red selection marks, Ctrl+D persistent bookmarks, Alt+F1/F2 drive menus.
@@ -55,13 +55,21 @@ First usable implementation is built and validated. Broader acceptance work rema
 
 - [x] Restore keyboard navigation after external viewer exit; verify local/SSH cursor movement and preserve path-editor/tab input.
 
-## Media viewer (planned)
+## Media viewer
 
 See [full design](../docs/Media-viewer.md).
 
 - [x] Specify standalone player architecture, keys and SSH streaming contract.
-- [ ] Backend spike: pinned libmpv, JPEG/PNG + MP4/audio, seeks/frame steps, rendering and hardware decode.
-- [ ] Standalone local mixed-folder viewer with requested keyboard controls.
-- [ ] Space launch and folder snapshot IPC; preserve mark commands and keyboard return.
-- [ ] Provider read-at API and bounded, seekable SSH playback.
-- [ ] Fixture/soak tests, dependency packaging and native portability.
+- [x] Backend spike: pinned libmpv, JPEG/PNG + MP4/audio, seeks/frame steps, native D3D11 rendering and hardware decode.
+- [x] Standalone local mixed-folder viewer with requested keyboard controls.
+- [x] Space launch and bounded folder snapshots; preserve mark commands, current-item return and keyboard navigation.
+- [x] Provider read-at API and bounded, seekable SSH playback.
+- [x] Ctrl+C/Ctrl+Insert copies decoded image/frame; preserve alpha with a compatible clipboard fallback.
+- [x] Local tool schemas/MCP, generation checks, asynchronous capture status and explicit agent PNG capture.
+- [x] Native JPEG/PNG/HEVC/H.264/WAV, CFR/VFR, clipboard, MCP and SFTP tail-index fixtures.
+- [ ] Reusable commander attachment and paged session IPC, replacing temporary snapshot files.
+- [ ] Remote reconnect/version checks and interruption/latency/resource soak tests.
+- [ ] 4K/HDR, mirrored EXIF orientations, all keyboard layouts/DPI and audio-device quality validation.
+- [ ] Redistributable runtime license/build manifest and packaging; native Linux/macOS shells.
+
+Implemented behavior and agent examples: [aiview](../docs/Aiview.md).

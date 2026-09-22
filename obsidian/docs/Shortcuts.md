@@ -8,7 +8,8 @@
 | Backspace | Parent directory |
 | Alt+Left / Alt+Right | Back / forward |
 | Insert | Toggle mark and advance |
-| Space | Toggle mark |
+| Space | Open recognized media in aiview; toggle mark on other entries |
+| Shift+Space | Toggle mark, including media |
 | Shift+Up / Down | Mark the row being left |
 | Ctrl+A | Mark all files and directories, excluding parent row |
 | Ctrl+L | Edit location in place; Enter applies, Escape cancels |
@@ -39,3 +40,5 @@ Marks use red text; the full-row highlighted cursor moves independently. Masks s
 Drive letters and bookmark numbers are menu accelerators; arrows/Enter select and Escape cancels. Bookmarks persist with the session and are shared by both panels.
 
 SSH: Alt+F1/F2 -> SSH -> alias. Ctrl+L accepts ssh://alias/path. F3 downloads a cached read-only view; Enter on a remote file also views. F5 copies marks or focus to the opposite panel after confirmation; Escape cancels a transfer. Remote editing/upload-on-save is not available yet.
+
+Media viewer: PgUp/PgDn/Home/End browse folder media; Left/Right seek 5 seconds; comma/period step frames; Space play/pause; Ctrl+C or Ctrl+Insert copies the decoded image/frame; Escape closes. F toggles fullscreen; +/-/0/1 zoom/fit/actual pixels for stills. See [aiview](Aiview.md).

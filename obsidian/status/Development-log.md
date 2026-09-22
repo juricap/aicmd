@@ -36,3 +36,11 @@ Fixed the active-window/child-input mismatch after returning from jptxt. Remembe
 ## 2026-09-22: media viewer design
 
 Researched mpv/libmpv playback, render and stream APIs. Chose an optional standalone C++ player as the proposed first host, with images and MP4 in the first usable release, then aicmd Space integration and seekable SFTP sources. Specified exact navigation/seek/frame keys, marking-key conflict resolution, folder snapshot ordering, focus-return contract, IPC/tool commands, budgets and acceptance tests. Design only; runtime selection still needs the backend spike.
+
+## 2026-09-22: aiview, clipboard and agent tools
+
+Implemented native Windows aiview with pinned libmpv development runtime, D3D11 playback, C++ media controller, mixed-folder navigation and the requested keys. Added dedicated SFTP read-at sources and a 64 MiB block cache; remote video no longer needs full-file staging when opened with Space. Integrated frozen commander folder snapshots, independent marks and final-item return. Native integration testing exposed and fixed missing projection of the returned item into the visible list cursor.
+
+Added Ctrl+C/Ctrl+Insert pixel copying, asynchronous operation status, local user-restricted named-pipe controls, JSON schemas and MCP stdio adapter. Explicit agent frame capture returns bounded PNG image content independently of clipboard. Tests caught GPU screenshots including the transparency checkerboard: switched capture to software-accessible decoded pixels, retained alpha, and applied display rotation explicitly. Added CF_DIBV5 and a composited fallback. A large PNG test caught nonblocking pipe buffer limits; responses now write bounded chunks with progress-based timeouts.
+
+Validation: Windows/Linux shared suites (58 + 14 + 22 checks), 28 native media checks including HEVC and variable frame rates, SFTP tail-index seeking and reverse stepping with about 1.8 MB fetched, real clipboard pixels, rotation/transparency and MCP image responses. Commander/native text-viewer regressions are tracked in Status. Runtime/header provenance and remaining packaging/portability/performance gates are documented in Aiview.md and third_party/mpv/README.md. No Gemini account or external model connection was configured.

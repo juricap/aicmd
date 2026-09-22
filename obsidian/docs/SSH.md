@@ -28,7 +28,9 @@ Files stream into exclusively-created `.aicmd-part-*` siblings, then publish wit
 
 Recursive copying refuses symlinks and special files, limits depth to 64 and total visited entries to one million, and rejects destinations inside the source (using canonical paths where available). It does not preserve timestamps/permissions/ownership; remote files start with mode 0600 and directories 0700. Windows-incompatible remote filenames fail copying rather than being silently renamed. UTF-8 remote names are supported; arbitrary non-UTF-8 server filenames on Windows remain a limitation.
 
-Remote viewing stages at most 1 GiB per file, within a 2 GiB disk-cache admission budget under `%TEMP%\aicmd-view`. Cache checks use metadata, not cryptographic content versions. Staged files remain on disk so an open external viewer is never invalidated; when full, close old views and clean that folder. F5 has no 1 GiB limit. Large-file range-based viewers and automatic lifecycle cleanup remain planned.
+Remote F3/jptxt viewing stages at most 1 GiB per file, within a 2 GiB disk-cache admission budget under `%TEMP%\aicmd-view`. Cache checks use metadata, not cryptographic content versions. Staged files remain on disk so an open external viewer is never invalidated; when full, close old views and clean that folder. F5 has no 1 GiB limit. Automatic staging-cache lifecycle cleanup remains planned.
+
+**Space on media now opens [aiview](Aiview.md)** with seekable SFTP byte reads and a bounded block cache. Images/video/audio do not use the jptxt staging cache or its 1 GiB limit. Playback, seeking, frame stepping, clipboard and agent capture use the same decoded media path as local files.
 
 **Editing a staged view is local only.** F4 inside jptxt can enable local editing, but saving does not upload. aicmd F4 on a remote path explicitly reports that remote edit/upload-on-save is unavailable. Conflict-aware remote editing remains a separate feature.
 

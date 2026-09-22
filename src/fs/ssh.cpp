@@ -1,5 +1,6 @@
 #include "ssh.h"
 #include "ssh_process.h"
+#include "read_source.h"
 #include <algorithm>
 #include <cstring>
 #include <fstream>
@@ -163,6 +164,49 @@ public:
 };
 }
 std::shared_ptr<Provider> filesystem_provider() { return std::make_shared<Filesystems>(); }
+namespace {
+class RemoteRead final : public ReadSource {
+    Cancel cancel;
+    Sftp sftp;
+    std::string handle;
+    uint64_t length;
+public:
+    RemoteRead(const Location& location,const Cancel& token) : cancel(token),sftp(location.host,token) {
+        SshDeadline deadline(sftp.pipe,cancel);
+        auto attr = sftp.stat(location.remote,true);
+        if (!attr.regular() || !(attr.flags & 1) || attr.size > INT64_MAX) throw std::runtime_error("Media source must be a regular, sized file");
+        length = attr.size; handle = sftp.open(location.remote,false);
+    }
+    // Each source owns its connection: destruction interrupts it without affecting browsing/copies.
+    uint64_t size() const override { return length; }
+    std::string read_at(uint64_t offset,size_t count) override {
+        if (cancel && cancel->load()) throw std::runtime_error("Cancelled");
+        if (offset >= length) return {};
+        SshDeadline deadline(sftp.pipe,cancel);
+        return sftp.read(handle,offset,static_cast<size_t>(std::min<uint64_t>({count,512*1024,length-offset})));
+    }
+};
+class LocalRead final : public ReadSource {
+    std::ifstream input; uint64_t length; Cancel cancel;
+public:
+    LocalRead(const Location& file,const Cancel& token) : input(file.local,std::ios::binary),length(fs::file_size(file.local)),cancel(token) {
+        if (!input || length > INT64_MAX) throw std::runtime_error("Cannot open media source");
+    }
+    uint64_t size() const override { return length; }
+    std::string read_at(uint64_t offset,size_t count) override {
+        if (cancel && cancel->load()) throw std::runtime_error("Cancelled");
+        if (offset >= length) return {};
+        std::string data(static_cast<size_t>(std::min<uint64_t>({count,512*1024,length-offset})),'\0');
+        input.clear(); input.seekg(static_cast<std::streamoff>(offset)); input.read(data.data(),data.size());
+        if (static_cast<size_t>(input.gcount()) != data.size()) throw std::runtime_error("Media source changed or read failed");
+        return data;
+    }
+};
+}
+std::unique_ptr<ReadSource> open_read(const Location& file,const Cancel& cancel) {
+    if (file.is_remote()) return std::make_unique<RemoteRead>(file,cancel);
+    return std::make_unique<LocalRead>(file,cancel);
+}
 static void local_name(const fs::path& name);
 fs::path stage_view(const Location& source,const Cancel& cancel,const Progress& progress) {
     if (!source.is_remote()) return source.local;

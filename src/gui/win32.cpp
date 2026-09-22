@@ -1,6 +1,8 @@
 #include "core/core.h"
 #include "host/state.h"
 #include "fs/ssh.h"
+#include "media/session.h"
+#include <nlohmann/json.hpp>
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -53,6 +55,11 @@ struct App {
     int drag = -1;
     RECT divider{};
     int width = 1200, height = 760;
+    HANDLE mediaProcess{};
+    fs::path mediaSession, mediaReturn;
+    Location mediaDirectory;
+    Id mediaTab = 0;
+    int mediaPanel = 0;
     // Native smoke mode exercises real controls and saves an isolated session.
     fs::path smokePath;
     int smokeStage = 0, smokeTicks = 0;
@@ -242,6 +249,60 @@ void launch_editor(const fs::path& file,bool viewOnly) {
     }
     CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
     app->notice = viewOnly ? L"Opened read-only in jptxt. F4 there enables editing without restarting." : L"Opened in jptxt. Ctrl+R refreshes the listing.";
+}
+bool launch_media(int p) {
+    auto& pane = app->panes[p]; auto tab = current(p);
+    int row = ListView_GetNextItem(pane.list,-1,LVNI_FOCUSED);
+    if (!tab || !tab->snapshot || row <= 0 || static_cast<size_t>(row) > tab->snapshot->entries.size()) return false;
+    const auto& focused = tab->snapshot->entries[row-1];
+    if (focused.directory || av::kind(focused.name) == av::Kind::Unknown) return false;
+    if (app->mediaProcess) {app->notice = L"A media viewer is already open for this commander. Close it before opening another folder."; return true;}
+    capture(p);
+    try {
+        wchar_t module[32768]{}; GetModuleFileNameW(nullptr,module,32768);
+        auto executable = fs::path(module).parent_path()/L"aiview.exe";
+        if (!fs::is_regular_file(executable)) throw std::runtime_error("aiview.exe not found beside aicmd.exe; build the optional media viewer");
+        nlohmann::json paths = nlohmann::json::array(); size_t index = 0;
+        for (const auto& e : tab->snapshot->entries) if (!e.directory && av::kind(e.name) != av::Kind::Unknown) {
+            if (e.name == focused.name) index = paths.size(); paths.push_back((tab->path/e.name).u8string());
+        }
+        auto payload = nlohmann::json{{"version",1},{"items",paths},{"index",index}}.dump();
+        if (payload.size() > 32*1024*1024) throw std::runtime_error("Media folder snapshot exceeds 32 MiB");
+        auto root = fs::temp_directory_path()/L"aicmd-media"; fs::create_directories(root);
+        auto name = std::to_wstring(GetCurrentProcessId())+L"-"+std::to_wstring(GetTickCount64());
+        app->mediaSession = root/(name+L".json"); app->mediaReturn = root/(name+L".return.json");
+        HANDLE file = CreateFileW(app->mediaSession.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_TEMPORARY,nullptr);
+        if (file == INVALID_HANDLE_VALUE) throw std::runtime_error("Cannot create media folder snapshot");
+        DWORD written = 0; bool saved = WriteFile(file,payload.data(),static_cast<DWORD>(payload.size()),&written,nullptr) && written == payload.size(); CloseHandle(file);
+        if (!saved) throw std::runtime_error("Cannot write media folder snapshot");
+        std::wstring args = quote_arg(executable.native())+L" --session "+quote_arg(app->mediaSession.native())+L" --return "+quote_arg(app->mediaReturn.native());
+        STARTUPINFOW si{sizeof(si)}; PROCESS_INFORMATION pi{};
+        if (!CreateProcessW(executable.c_str(),args.data(),nullptr,nullptr,FALSE,0,nullptr,nullptr,&si,&pi)) throw std::runtime_error("Cannot launch aiview");
+        CloseHandle(pi.hThread); app->mediaProcess = pi.hProcess; app->mediaPanel = p; app->mediaTab = tab->id; app->mediaDirectory = tab->path;
+        app->notice = L"Media viewer opened. PgUp/PgDn browse; Ctrl+C copies the image/frame. Insert or Shift+Space marks media.";
+    } catch (const std::exception& e) {
+        app->notice = wide(e.what()); std::error_code ec; fs::remove(app->mediaSession,ec); fs::remove(app->mediaReturn,ec);
+    }
+    return true;
+}
+void poll_media() {
+    if (!app->mediaProcess || WaitForSingleObject(app->mediaProcess,0) != WAIT_OBJECT_0) return;
+    const auto* tab = current(app->mediaPanel);
+    if (tab && tab->id == app->mediaTab && tab->loading) return;
+    try {
+        if (tab && tab->id == app->mediaTab && tab->path == app->mediaDirectory && tab->snapshot && fs::exists(app->mediaReturn) && fs::file_size(app->mediaReturn) < 65536) {
+            std::ifstream input(app->mediaReturn,std::ios::binary); nlohmann::json j; input >> j;
+            Location file(fs::u8path(j.at("path").get<std::string>()));
+            if (file.parent_path() == tab->path) {
+                Command c; c.action = Action::SelectionSet; c.panel = app->mediaPanel; c.tab = tab->id; c.snapshot = tab->snapshot->id; c.selection = tab->selection; c.focus = file.filename(); app->core.execute(c);
+                app->panes[app->mediaPanel].snapshot.reset(); render();
+            }
+        }
+    } catch (...) {}
+    CloseHandle(app->mediaProcess); app->mediaProcess = nullptr;
+    std::error_code ec; fs::remove(app->mediaSession,ec); fs::remove(app->mediaReturn,ec);
+    // WM_ACTIVATE/WM_SETFOCUS recover keyboard routing without stealing foreground.
+    app->notice = L"Media viewer closed.";
 }
 void run_command(Command c) {
     auto r = app->core.execute(c);
@@ -535,6 +596,7 @@ bool key(MSG& msg,int testModifiers = -1) {
     if (msg.wParam == VK_RETURN) { if (focus == v.path) { go(p); return true; } if (focus == v.list) { open_item(p); return true; } }
     if (msg.wParam == VK_BACK && focus == v.list) { action(Action::Parent,p); return true; }
     if (focus == v.list && (msg.wParam == VK_INSERT || msg.wParam == VK_SPACE)) {
+        if (msg.wParam == VK_SPACE && !shift && !ctrl && !alt && launch_media(p)) return true;
         int row = ListView_GetNextItem(v.list,-1,LVNI_FOCUSED);
         if (row > 0) { bool selected = (ListView_GetItemState(v.list,row,LVIS_SELECTED)&LVIS_SELECTED) != 0; ListView_SetItemState(v.list,row,selected ? 0 : LVIS_SELECTED,LVIS_SELECTED); }
         if (msg.wParam == VK_INSERT && row+1 < ListView_GetItemCount(v.list)) {
@@ -669,6 +731,7 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
         return 0;
     }
     case WM_TIMER:
+        poll_media();
         for (int p = 0; p < 2; ++p) if (app->panes[p].selectionDirty) capture(p);
         if (app->core.poll()) app->dirty = true;
         for (const auto& path : app->core.take_viewers()) {

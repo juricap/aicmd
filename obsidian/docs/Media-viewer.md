@@ -1,6 +1,6 @@
 # Media viewer design
 
-2026-09-22. Implementation plan, not an implemented feature. Working executable name: **aiview**. This supersedes the earlier suggestion to implement the first image viewer inside jptxt. jptxt remains the text/hex viewer and editor.
+2026-09-22. Target design for **aiview**. The first Windows implementation now exists; [usage and implementation limits](Aiview.md) distinguish shipped behavior from remaining targets below. This supersedes the earlier suggestion to implement the first image viewer inside jptxt. jptxt remains the text/hex viewer and editor.
 
 ## Product contract
 
@@ -22,6 +22,7 @@ Defaults selected for implementation: video/audio autoplay on opening, images re
 | Viewer: Left / Right | Seek audio/video -5 / +5 seconds; preserve playing/paused state; clamp at endpoints |
 | Viewer: comma / period | Previous / next video presentation frame; pause and remain paused |
 | Viewer: Space | Pause/resume audio/video; no automatic slideshow for still images |
+| Viewer: Ctrl+C / Ctrl+Insert (future macOS: Cmd+C) | Copy decoded image/current video frame into the OS clipboard, excluding window chrome |
 | Viewer: Escape | Close viewer and return to the originating aicmd panel, including from fullscreen |
 | Viewer: F | Toggle fullscreen |
 | Viewer: + / - / 0 / 1 | Still-image zoom in / out / fit / actual pixels |
@@ -115,7 +116,7 @@ Typed commands, shared by keyboard and eventual model adapters:
 - media_play, media_pause, media_seek_relative, media_seek_absolute, media_step_frame
 - media_set_volume, media_set_mute, media_set_fullscreen, media_set_image_view
 
-Commands validate session/item generation and capabilities. Long operations return accepted/request IDs; events distinguish completion/error from mere acceptance. Throttle progress/state events, preserve command results and error events. Screen/image capture and destructive media edits are separate future capabilities, not implicit playback commands.
+Commands validate session/item generation and capabilities. Long operations return accepted/request IDs; events distinguish completion/error from mere acceptance. Throttle progress/state events, preserve command results and error events. Add explicit `media_copy_frame`, `media_capture_frame` and `media_get_frame`: copying changes the local clipboard; agent capture returns a bounded image only when requested. No implicit frame uploads. Destructive media edits remain outside playback commands. Initial transport polls state/operation completion; an event subscription channel remains a future target.
 
 ## Delivery sequence and acceptance gates
 

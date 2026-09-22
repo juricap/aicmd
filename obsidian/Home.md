@@ -21,3 +21,4 @@ Development is tracked at https://github.com/juricap/aicmd on main.
 - [SSH browsing, viewing and copying](docs/SSH.md)
 
 - [Media viewer design and delivery plan](docs/Media-viewer.md)
+- [aiview usage, clipboard and agent API](docs/Aiview.md)
