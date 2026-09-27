@@ -345,6 +345,45 @@ void open_item(int p) {
     run_command(c);
 }
 void go(int p) { capture(p); Command c; c.action = Action::Navigate; c.panel = p; c.path = text(app->panes[p].path); run_command(c); end_path(p); }
+// List-view selection is our persistent mark set, not the navigation cursor.
+// Own the complete left-button sequence so native selection/drag tracking cannot
+// clear marks or limit clicks to the filename label after keyboard navigation.
+LRESULT CALLBACK file_list_proc(HWND list,UINT message,WPARAM w,LPARAM l,UINT_PTR id,DWORD_PTR) {
+    if (message == WM_NCDESTROY) { RemoveWindowSubclass(list,file_list_proc,id); return DefSubclassProc(list,message,w,l); }
+    if (message == WM_LBUTTONUP) return 0;
+    if (message != WM_LBUTTONDOWN && message != WM_LBUTTONDBLCLK) return DefSubclassProc(list,message,w,l);
+    int p = static_cast<int>(id); auto& pane = app->panes[p];
+    int previousPanel = app->core.state().activePanel;
+    if (app->panes[previousPanel].selectionDirty) capture(previousPanel);
+    if (pane.editingPath) end_path(p);
+    activate(p); SetFocus(list);
+    POINT point{GET_X_LPARAM(l),GET_Y_LPARAM(l)}; RECT client{}; GetClientRect(list,&client);
+    int row = -1;
+    if (PtInRect(&client,point)) {
+        const int count = ListView_GetItemCount(list), first = ListView_GetTopIndex(list);
+        const int end = std::min(count,first+ListView_GetCountPerPage(list)+2);
+        for (int i = first;i < end;++i) {
+            RECT bounds{};
+            if (ListView_GetItemRect(list,i,&bounds,LVIR_BOUNDS) && point.y >= bounds.top && point.y < bounds.bottom) {row = i; break;}
+        }
+    }
+    if (row < 0) return 0;
+    int old = ListView_GetNextItem(list,-1,LVNI_FOCUSED);
+    if (w & MK_SHIFT) {
+        if (old < 0) old = row;
+        for (int i = std::max(1,std::min(old,row));i <= std::max(old,row);++i) {
+            ListView_SetItemState(list,i,LVIS_SELECTED,LVIS_SELECTED); redraw_row(list,i);
+        }
+    } else if ((w & MK_CONTROL) && row > 0 && message == WM_LBUTTONDOWN) {
+        bool marked = (ListView_GetItemState(list,row,LVIS_SELECTED)&LVIS_SELECTED) != 0;
+        ListView_SetItemState(list,row,marked ? 0 : LVIS_SELECTED,LVIS_SELECTED);
+    }
+    ListView_SetItemState(list,row,LVIS_FOCUSED,LVIS_FOCUSED);
+    ListView_EnsureVisible(list,row,FALSE);
+    pane.selectionDirty = true; redraw_row(list,old); redraw_row(list,row);
+    if (message == WM_LBUTTONDBLCLK && !(w & (MK_CONTROL|MK_SHIFT))) open_item(p);
+    return 0;
+}
 HWND control(const wchar_t* cls, const wchar_t* title, DWORD style, int id) {
     HWND h = CreateWindowExW(0,cls,title,WS_CHILD|WS_VISIBLE|style,0,0,0,0,app->window,reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),GetModuleHandleW(nullptr),nullptr);
     SendMessageW(h,WM_SETFONT,reinterpret_cast<WPARAM>(app->font),TRUE); return h;
@@ -374,6 +413,7 @@ void create_controls() {
         ShowWindow(v.path,SW_HIDE);
         v.summary = control(L"STATIC",L"",SS_LEFTNOWORDWRAP,base+3);
         v.list = control(WC_LISTVIEWW,L"Files",WS_TABSTOP|LVS_REPORT|LVS_OWNERDATA|LVS_SHOWSELALWAYS|LVS_SHAREIMAGELISTS,base+4);
+        SetWindowSubclass(v.list,file_list_proc,static_cast<UINT_PTR>(p),0);
         ListView_SetExtendedListViewStyle(v.list,LVS_EX_DOUBLEBUFFER|LVS_EX_LABELTIP);
         SetWindowTheme(v.list,L"",L"");
         ListView_SetImageList(v.list,app->icons,LVSIL_SMALL);
@@ -692,6 +732,39 @@ void smoke() {
         int layouts = app->layoutPasses;
         for (int i = 0; i < 50; ++i) { press(VK_DOWN); capture(1); render(); press(VK_UP); capture(1); render(); }
         check(app->layoutPasses == layouts);
+        auto click = [&](HWND target,int row,int x,WPARAM modifiers = 0,UINT message = WM_LBUTTONDOWN) {
+            ListView_EnsureVisible(target,row,FALSE); RECT bounds{};
+            check(ListView_GetItemRect(target,row,&bounds,LVIR_BOUNDS) != FALSE);
+            auto point = MAKELPARAM(x,(bounds.top+bounds.bottom)/2);
+            SendMessageW(target,message,modifiers|MK_LBUTTON,point);
+            SendMessageW(target,WM_LBUTTONUP,modifiers,point);
+        };
+        ListView_SetItemState(list,-1,0,LVIS_SELECTED|LVIS_FOCUSED);
+        ListView_SetItemState(list,1,LVIS_SELECTED|LVIS_FOCUSED,LVIS_SELECTED|LVIS_FOCUSED);
+        RECT mouseClient{}; GetClientRect(list,&mouseClient);
+        // Alternate arrows and clicks across the name, metadata and blank row tail.
+        for (int x : {px(25),px(300),static_cast<int>(mouseClient.right)-px(4)}) {
+            press(VK_HOME); press(VK_DOWN); press(VK_DOWN);
+            click(list,4,x);
+            check(ListView_GetNextItem(list,-1,LVNI_FOCUSED) == 4);
+            check(ListView_GetSelectedCount(list) == 1 && (ListView_GetItemState(list,1,LVIS_SELECTED)&LVIS_SELECTED));
+            check(GetCapture() != list);
+        }
+        click(list,4,px(25),MK_CONTROL); check(ListView_GetSelectedCount(list) == 2);
+        click(list,4,px(25),MK_CONTROL); check(ListView_GetSelectedCount(list) == 1);
+        click(list,6,mouseClient.right-px(4),MK_SHIFT);
+        check(ListView_GetSelectedCount(list) == 4); // Original mark plus rows 4..6.
+        click(list,0,px(25),MK_CONTROL); check(!(ListView_GetItemState(list,0,LVIS_SELECTED)&LVIS_SELECTED));
+        click(app->panes[0].list,2,px(300));
+        check(app->core.state().activePanel == 0 && GetFocus() == app->panes[0].list);
+        click(list,3,px(300)); check(app->core.state().activePanel == 1 && GetFocus() == list);
+        capture(1); check(current(1)->selection.size() == 4);
+        RECT lastRow{};
+        if (ListView_GetItemRect(list,ListView_GetItemCount(list)-1,&lastRow,LVIR_BOUNDS) && lastRow.bottom < mouseClient.bottom-px(2)) {
+            auto point = MAKELPARAM(px(50),mouseClient.bottom-px(1));
+            SendMessageW(list,WM_LBUTTONDOWN,MK_LBUTTON,point); SendMessageW(list,WM_LBUTTONUP,0,point);
+            check(ListView_GetNextItem(list,-1,LVNI_FOCUSED) == 3 && ListView_GetSelectedCount(list) == 4);
+        }
         ListView_SetItemState(list,-1,0,LVIS_SELECTED|LVIS_FOCUSED);
         ListView_SetItemState(list,1,LVIS_FOCUSED,LVIS_FOCUSED);
         press(VK_INSERT); press(VK_DOWN);
@@ -712,6 +785,18 @@ void smoke() {
         auto persisted = load_state(app->statePath);
         check(persisted.found && !persisted.error && persisted.state.panels[0].tabs.size() == 1);
         check(persisted.state.bookmarks.size() == 1);
+    } else if (app->smokeStage == 7) {
+        Command c; c.action = Action::Navigate; c.panel = 1; c.path = fs::current_path(); run_command(c);
+    } else if (app->smokeStage == 8) {
+        check(current(1)->path == fs::current_path());
+        HWND list = app->panes[1].list; ListView_EnsureVisible(list,0,FALSE);
+        RECT row{},client{}; ListView_GetItemRect(list,0,&row,LVIR_BOUNDS); GetClientRect(list,&client);
+        auto point = MAKELPARAM(client.right-px(4),(row.top+row.bottom)/2);
+        SendMessageW(list,WM_LBUTTONDOWN,MK_LBUTTON,point); SendMessageW(list,WM_LBUTTONUP,0,point);
+        SendMessageW(list,WM_LBUTTONDBLCLK,MK_LBUTTON,point); SendMessageW(list,WM_LBUTTONUP,0,point);
+        check(current(1)->requested == fs::current_path().parent_path());
+    } else if (app->smokeStage == 9) {
+        check(current(1)->path == fs::current_path().parent_path());
         PostMessageW(app->window,WM_CLOSE,0,0);
     }
     ++app->smokeStage;
@@ -845,7 +930,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int show) {
         ShowWindow(hwnd,show); render(); SetFocus(app->panes[app->core.state().activePanel].list);
         MSG msg{};
         while (GetMessageW(&msg,nullptr,0,0) > 0) { if (!key(msg)) { TranslateMessage(&msg); DispatchMessageW(&msg); } }
-        if (!app->smokePath.empty()) { std::ofstream f(app->smokePath); f << (app->smokeFailed ? "FAIL" : "PASS") << " native GUI: compact full-width lists, tabs, parent, keyboard panel/tab/path/mark routes, persistence\n"; }
+        if (!app->smokePath.empty()) { std::ofstream f(app->smokePath); f << (app->smokeFailed ? "FAIL" : "PASS") << " native GUI: compact full-width lists, tabs, parent, keyboard/mouse cursor and mark routes, full-row clicks, double-click navigation, persistence\n"; }
         int result = app->smokeFailed ? 1 : 0;
         CloseHandle(app->stateLock); DeleteObject(app->font); DeleteObject(app->activePath); DeleteObject(app->inactivePath); ImageList_Destroy(app->icons); app.reset(); return result;
     } catch (const std::exception& e) { MessageBoxW(nullptr,wide(e.what()).c_str(),L"aicmd",MB_ICONERROR); return 1; }

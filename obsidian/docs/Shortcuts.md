@@ -32,6 +32,8 @@ F3 opens jptxt read-only; F4 inside jptxt enables editing without restarting. F5
 
 Marks use red text; the full-row highlighted cursor moves independently. Masks support *, ?, and *.* including extensionless names.
 
+Mouse: a plain left click anywhere across a file row moves only the cursor and preserves existing marks. Ctrl+click toggles that row's mark; Shift+click adds the range from the current cursor. The parent row cannot be marked. Double-click opens the clicked entry; clicking empty space preserves cursor and marks. Keyboard and mouse navigation can be freely alternated.
+
 | Navigation key | Action |
 |---|---|
 | Ctrl+D | Folder bookmarks: Add current folder, remove current folder, or jump to a saved folder |

@@ -1,5 +1,7 @@
 # Status
 
+2026-09-27 mouse follow-up: fixed native left-click selection conflicting with independent keyboard cursor/marks. Full-width row clicks now move the cursor without turning the clicked item red or clearing existing marks. Ctrl+click toggles marks; Shift+click adds a range. Native smoke verifies alternating keys/clicks across name, metadata and row-tail positions, panel focus, blank space, parent-row exclusion and double-click navigation. Windows build (all three test suites), native GUI smoke and media/commander return tests pass. This is a Windows UI change; Linux code is unchanged.
+
 2026-09-22 — v0.1.0 development. First usable compact Windows browser implemented and validated. Broader M1 acceptance items remain in the todo list.
 
 [Home](../Home.md), [todos](../todos/M1-Windows.md), [design](../docs/Design.md).

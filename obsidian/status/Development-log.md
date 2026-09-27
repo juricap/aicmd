@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-09-27: consistent mouse input after keyboard navigation
+
+The report list used custom full-row cursor painting and explicit keyboard navigation, while mouse input still followed native selection and label hit-testing. Added a list subclass owning left-button down/up/double-click, full-width row hit detection and explicit cursor/mark semantics. Plain clicks preserve marks; Ctrl toggles and Shift adds a range; double-click navigates the clicked entry. This also avoids native selection/drag tracking for the intercepted left-button sequence. No persistent mouse capture is introduced.
+
+Expanded in-process native smoke to alternate keys with filename/metadata/row-tail clicks, check mark preservation and panel activation, and complete a real double-click directory change. Build and all Windows suites pass; native GUI and aiview/commander return regressions pass. Updated shortcut documentation.
+
 ## 2026-09-21
 
 - Studied Double Commander source and local jptxt conventions; wrote shared-core/native-frontend design.

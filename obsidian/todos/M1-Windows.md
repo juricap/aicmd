@@ -1,5 +1,7 @@
 # M1: compact Windows directory browsing
 
+- [x] Consistent full-row mouse cursor after keyboard navigation; plain clicks preserve marks, Ctrl/Shift clicks mark explicitly; native regression coverage (2026-09-27).
+
 First usable implementation is built and validated. Broader acceptance work remains below. [Design](../docs/Design.md), [status](../status/Status.md).
 
 ## Implemented
