@@ -19,6 +19,7 @@ Development is tracked at https://github.com/juricap/aicmd on main.
 - [Viewer plugins and remote filesystems](docs/Plugins-and-remote-filesystems.md)
 
 - [SSH browsing, viewing and copying](docs/SSH.md)
+- [Queued copy jobs and deferred decision design](docs/Copy-jobs.md)
 
 - [Media viewer design and delivery plan](docs/Media-viewer.md)
 - [aiview usage, clipboard and agent API](docs/Aiview.md)

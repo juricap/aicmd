@@ -75,3 +75,15 @@ See [full design](../docs/Media-viewer.md).
 - [ ] Redistributable runtime license/build manifest and packaging; native Linux/macOS shells.
 
 Implemented behavior and agent examples: [aiview](../docs/Aiview.md).
+
+## Copy queue
+
+- [x] Dedicated bounded FIFO, frozen selection/destination and continued browsing.
+- [x] Byte/root progress, active and queued cancellation, compact F5/Escape/Shift+Escape UI.
+- [x] Windows/Linux queue regressions, live SSH queued uploads, native large-folder progress/cancellation.
+- [ ] Durable incremental item journal and deferred nonmodal conflict inbox; continue unaffected items.
+- [ ] Revision-checked skip/rename/replace/merge decisions shared with model adapters.
+- [ ] Crash recovery, detach/reconnect and opt-in unattended notifications.
+- [ ] WAN/resource/long-duration stress, fairness and bandwidth tuning.
+
+See [copy jobs design](../docs/Copy-jobs.md).

@@ -50,7 +50,9 @@ struct App {
     bool locationMenuOpen = false;
     std::vector<std::string> sshHosts;
     Id transfer = 0;
-    bool transferIsCopy = false;
+    std::deque<std::pair<Id,bool>> transfers;
+    std::wstring transferError;
+    size_t transfersDone = 0, transfersCancelled = 0;
     int layoutPasses = 0;
     int drag = -1;
     RECT divider{};
@@ -309,8 +311,10 @@ void run_command(Command c) {
     if (r.error) app->notice = wide(r.error.message);
     else { app->notice.clear(); if (!r.launchPath.empty()) launch_editor(r.launchPath.local,r.viewOnly); }
     if (!r.error && r.job && (c.action == Action::FileCopy || c.action == Action::FileView)) {
-        app->transfer = r.job; app->transferIsCopy = c.action == Action::FileCopy;
-        app->notice = L"Transferring... Escape cancels.";
+        if (app->transfers.empty()) {app->transferError.clear(); app->transfersDone = app->transfersCancelled = 0;}
+        app->transfers.emplace_back(r.job,c.action == Action::FileCopy);
+        app->transfer = app->transfers.front().first;
+        app->notice = L"Transfer queued. Escape cancels current; Shift+Escape cancels all.";
     }
     if (r.save) save();
     if (app->core.state().quit) PostMessageW(app->window,WM_CLOSE,0,0);
@@ -319,7 +323,6 @@ void run_command(Command c) {
 void action(Action a, int p = -1) {
     if (p < 0) p = app->core.state().activePanel;
     capture(p);
-    if ((a == Action::FileCopy || a == Action::FileView) && app->transfer) { app->notice = L"Wait for the current transfer, or Escape to cancel."; return; }
     if (a == Action::FileCopy) {
         auto prompt = L"Copy marked entries (or the focused entry) to:\n"+shown(current(1-p)->path)+L"\n\nExisting destinations will not be overwritten.";
         if (MessageBoxW(app->window,prompt.c_str(),L"Copy - F5",MB_OKCANCEL|MB_ICONQUESTION) != IDOK) return;
@@ -663,7 +666,15 @@ bool key(MSG& msg,int testModifiers = -1) {
     if (msg.wParam == VK_F4 && !alt) { action(Action::FileEdit,p); return true; }
     if (msg.wParam == VK_F3) { action(Action::FileView,p); return true; }
     if (msg.wParam == VK_F5) { action(Action::FileCopy,p); return true; }
-    if (msg.wParam == VK_ESCAPE) { if (focus == v.path) end_path(p); else if (app->transfer) { Command c; c.action = Action::JobCancel; c.panel = p; c.job = app->transfer; run_command(c); } else action(Action::JobCancel,p); return true; }
+    if (msg.wParam == VK_ESCAPE) {
+        if (focus == v.path) end_path(p);
+        else if (app->transfer) {
+            Command c; c.action = Action::JobCancel; c.panel = p;
+            if (shift) {for (const auto& transfer : app->transfers) {c.job = transfer.first; run_command(c);}}
+            else {c.job = app->transfer; run_command(c);}
+        } else action(Action::JobCancel,p);
+        return true;
+    }
     return false;
 }
 void save() {
@@ -824,13 +835,37 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
             app->notice = L"Remote file staged read-only in jptxt. Editing this local copy does not upload changes.";
         }
         if (app->transfer) {
-            const auto* job = app->core.job(app->transfer);
-            if (job && job->state == JobState::Running) app->notice = L"Transfer: "+std::to_wstring(job->bytes ? job->bytes->load() : 0)+L" bytes | Escape cancels";
-            else {
-                if (job && job->error) app->notice = wide(job->error.message)+L" (completed files remain; a remote .aicmd-part file may need cleanup after disconnect)";
-                else if (job && job->state == JobState::Cancelled) app->notice = L"Transfer cancelled; completed files remain.";
-                else if (app->transferIsCopy) { app->notice = L"Copy complete."; for (int p = 0; p < 2; ++p) { Command c; c.action = Action::Refresh; c.panel = p; app->core.execute(c); } }
-                app->transfer = 0;
+            for (auto it = app->transfers.begin(); it != app->transfers.end();) {
+                const auto* job = app->core.job(it->first);
+                if (job && job_pending(job->state)) {++it; continue;}
+                if (!job) app->transferError = L"Transfer result expired.";
+                else {
+                    if (job->error) app->transferError = L"Job #"+std::to_wstring(job->id)+L": "+wide(job->error.message);
+                    else if (job->state == JobState::Cancelled) ++app->transfersCancelled;
+                    else ++app->transfersDone;
+                    auto destination = job->destination;
+                    if (it->second) for (int p = 0;p < 2;++p) {
+                        const auto* tab = current(p);
+                        if (tab && !tab->loading && tab->path == destination) {Command c; c.action = Action::Refresh; c.panel = p; app->core.execute(c);}
+                    }
+                }
+                it = app->transfers.erase(it);
+            }
+            app->transfer = app->transfers.empty() ? 0 : app->transfers.front().first;
+            if (app->transfer) {
+                const auto* job = app->core.job(app->transfer);
+                auto phase = job->state == JobState::Queued ? L"Queued" : job->state == JobState::Cancelling ? L"Cancelling" : app->transfers.front().second ? L"Copying" : L"Downloading viewer file";
+                app->notice = std::wstring(phase)+L" #"+std::to_wstring(job->id)+L": "+std::to_wstring(job->bytes->load())+L" bytes";
+                if (job->progress) {
+                    app->notice += L", "+std::to_wstring(job->progress->completedEntries.load())+L"/"+std::to_wstring(job->progress->totalEntries)+L" selected entries";
+                    std::lock_guard<std::mutex> lock(job->progress->mutex);
+                    app->notice += L" | "+shown(job->progress->current.filename());
+                }
+                app->notice += L" | "+std::to_wstring(app->transfers.size()-1)+L" pending | Esc cancel, Shift+Esc cancel all";
+                if (!app->transferError.empty()) app->notice += L" | Earlier error: "+app->transferError;
+            } else {
+                app->notice = L"Transfers finished: "+std::to_wstring(app->transfersDone)+L" completed, "+std::to_wstring(app->transfersCancelled)+L" cancelled. "+app->transferError;
+                if (app->transfersCancelled || !app->transferError.empty()) app->notice += L" Completed files remain; remote staging files may need cleanup after disconnect.";
             }
         }
         if (app->seen != app->core.state().revision || app->notice != app->renderedNotice) render();

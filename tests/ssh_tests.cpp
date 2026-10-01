@@ -1,5 +1,6 @@
 #include "fs/ssh.h"
 #include "host/state.h"
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <chrono>
@@ -68,6 +69,20 @@ int main(int argc,char** argv) {
             require(!result.error && core.job(result.job)->state == JobState::Succeeded && core.take_viewers().size() == 1,"Asynchronous remote viewer command");
             cmd.action = Action::FileCopy; cmd.path = "empty"; result = core.execute(cmd); settle(core);
             require(!result.error && core.job(result.job)->state == JobState::Failed,"Core copy reports destination conflict");
+            fs::create_directory(root/"queue-upload");
+            for (auto name : {"queue-a.bin","queue-b.bin","queue-c.bin"}) write(root/"queue-upload"/name,bytes);
+            Core queued; queued.start(root/"queue-upload",base); settle(queued);
+            Command upload; upload.action = Action::FileCopy; upload.snapshot = queued.tab(0)->snapshot->id;
+            upload.path = "queue-a.bin"; auto a = queued.execute(upload);
+            upload.path = "queue-b.bin"; auto b = queued.execute(upload);
+            upload.path = "queue-c.bin"; auto c = queued.execute(upload);
+            require(!a.error && !b.error && !c.error,"SSH copy batches queue concurrently with active upload");
+            Command stop; stop.action = Action::JobCancel; stop.job = c.job; queued.execute(stop); settle(queued);
+            require(queued.job(a.job)->state == JobState::Succeeded && queued.job(b.job)->state == JobState::Succeeded && queued.job(c.job)->state == JobState::Cancelled,"SSH FIFO completion and queued cancellation");
+            copy_file(base/"queue-b.bin",root/"queue-result.bin",cancel);
+            require(contents(root/"queue-result.bin") == bytes && queued.job(b.job)->bytes->load() == bytes.size(),"Queued SSH copy bytes and progress are exact");
+            auto finalListing = provider->list(base,false,cancel,32*1024*1024);
+            require(!finalListing.error && std::none_of(finalListing.entries.begin(),finalListing.entries.end(),[](const Entry& e){return e.name == "queue-c.bin";}),"Cancelled SSH queued job leaves no destination");
         }
         std::cout << "PASS " << checks << " SSH/copy checks\n";
         fs::remove_all(root); return 0;

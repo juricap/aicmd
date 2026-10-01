@@ -24,6 +24,8 @@ Workers own all connection I/O. Cancellation or 30 seconds without pipe progress
 
 ## Copy and cache semantics
 
+F5 accepts multiple bounded FIFO batches with progress; Escape cancels the displayed transfer and Shift+Escape cancels all. See [copy jobs](Copy-jobs.md) for queue limits and the next deferred-conflict design.
+
 Files stream into exclusively-created `.aicmd-part-*` siblings, then publish with no-replace rename/link behavior. Local files are flushed before publication. Remote server durability is not guaranteed by SFTP CLOSE. Source size/mtime changes during copying fail the operation; same-size edits within the server timestamp resolution are not reliably detectable. Files created before a later failure remain, as do newly-created directories. A connection failure can leave a remote staging file to clean up; this is reported in the GUI.
 
 Recursive copying refuses symlinks and special files, limits depth to 64 and total visited entries to one million, and rejects destinations inside the source (using canonical paths where available). It does not preserve timestamps/permissions/ownership; remote files start with mode 0600 and directories 0700. Windows-incompatible remote filenames fail copying rather than being silently renamed. UTF-8 remote names are supported; arbitrary non-UTF-8 server filenames on Windows remain a limitation.
@@ -37,7 +39,7 @@ Remote F3/jptxt viewing stages at most 1 GiB per file, within a 2 GiB disk-cache
 ## Validation
 
 - Windows and Linux: 58 existing core checks plus 14 offline SSH/copy checks.
-- Windows to `ai`: 45 checks including 8 MiB binary roundtrip, Japanese/spaced filename, recursive directories, remote-to-remote copy, empty files, no-overwrite, cancellation/reconnect, cache reuse/edit detection, remote session persistence and core view/copy jobs.
+- Windows to `ai`: 49 checks including 8 MiB binary roundtrip, Japanese/spaced filename, recursive directories, remote-to-remote copy, empty files, no-overwrite, cancellation/reconnect, cache reuse/edit detection, remote session persistence and core view/copy jobs.
 - Native Windows GUI: remote browsing, actual F3 jptxt handoff and confirmed F5 download; screenshot inspected. Standard native smoke also verifies 100 cursor movements do not invoke layout again.
 - Measured 8 MiB upload + download: about 1.8 seconds on this LAN including first connection startup. Not a WAN or maximum-throughput benchmark.
 - Linux build/offline tests verified over `ssh ai` in `/data/devel/aicmd-check-20260922`; the Linux SFTP transport and macOS GUI were not live-tested.

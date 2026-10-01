@@ -42,12 +42,14 @@ const std::vector<CommandInfo>& commands() {
 }
 Core::Core(std::shared_ptr<Provider> p) : provider_(std::move(p)), roots_(provider_->roots()) {
     for (int i = 0; i < 2; ++i) workers_.emplace_back([this]{ worker(); });
+    workers_.emplace_back([this]{ worker(true); });
 }
 Core::~Core() {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         stopping_ = true;
         for (auto& w : queue_) w.cancel->store(true);
+        for (auto& w : copies_) w.cancel->store(true);
         for (auto& c : running_) c->store(true);
     }
     cv_.notify_all();
@@ -64,42 +66,52 @@ Tab* Core::mutable_tab(int p, Id id) { return const_cast<Tab*>(tab(p,id)); }
 const Job* Core::job(Id id) const { auto it = jobs_.find(id); return it == jobs_.end() ? nullptr : &it->second; }
 void Core::prune_jobs() {
     while (jobs_.size() > 256) {
-        auto it = std::find_if(jobs_.begin(), jobs_.end(), [](const auto& j){return j.second.state != JobState::Running;});
+        auto it = std::find_if(jobs_.begin(), jobs_.end(), [](const auto& j){return !job_pending(j.second.state);});
         if (it == jobs_.end()) break;
         jobs_.erase(it);
     }
 }
 bool Core::submit(Work w) {
     std::lock_guard<std::mutex> lock(mutex_);
-    queue_.erase(std::remove_if(queue_.begin(),queue_.end(),[](const Work& q){return q.cancel->load();}),queue_.end());
+    if (w.kind == Work::Copy) {
+        if (copies_.size() >= 64 || w.queuedBytes > 32*1024*1024-copyBytes_) return false;
+        copyBytes_ += w.queuedBytes; copies_.push_back(std::move(w)); cv_.notify_all(); return true;
+    }
+    queue_.erase(std::remove_if(queue_.begin(),queue_.end(),[](const Work& q){return q.kind == Work::Scan && q.cancel->load();}),queue_.end());
     if (queue_.size() >= 64) return false;
     queue_.push_back(std::move(w));
-    cv_.notify_one();
+    cv_.notify_all();
     return true;
 }
-void Core::worker() {
+void Core::worker(bool copies) {
     for (;;) {
         Work w;
         {
             std::unique_lock<std::mutex> lock(mutex_);
-            cv_.wait(lock,[&]{return stopping_ || !queue_.empty();});
+            auto& queue = copies ? copies_ : queue_;
+            cv_.wait(lock,[&]{return stopping_ || !queue.empty();});
             if (stopping_) return;
-            w = std::move(queue_.front()); queue_.pop_front(); running_.push_back(w.cancel);
+            w = std::move(queue.front()); queue.pop_front(); running_.push_back(w.cancel);
         }
+        if (w.progress) w.progress->started.store(true);
         Listing listing; fs::path viewer;
         try {
             if (w.cancel->load()) listing.error = {"cancelled","Cancelled"};
             else if (w.kind != Work::Scan) {
                 uint64_t completed = 0;
                 for (const auto& source : w.sources) {
+                    if (w.cancel->load()) throw std::runtime_error("Copy cancelled");
+                    if (w.progress) { std::lock_guard<std::mutex> lock(w.progress->mutex); w.progress->current = source; }
                     auto destination = w.destination/source.filename();
                     if (w.kind == Work::View) {
                         viewer = stage_view(source,w.cancel,[&](uint64_t n){w.bytes->store(n);});
+                        if (w.progress) ++w.progress->completedEntries;
                         continue;
                     }
                     uint64_t bytes = 0;
                     copy_location(source,destination,w.cancel,[&](uint64_t n){bytes = n; w.bytes->store(completed+n);});
                     completed += bytes;
+                    if (w.progress) ++w.progress->completedEntries;
                 }
             } else listing = provider_->list(w.path,w.node != 0,w.cancel,w.budget);
             if (!listing.error) {
@@ -110,7 +122,7 @@ void Core::worker() {
         {
             std::lock_guard<std::mutex> lock(mutex_);
             running_.erase(std::remove(running_.begin(),running_.end(),w.cancel),running_.end());
-            if (!w.cancel->load()) done_.push_back({std::move(w),std::move(listing),std::move(viewer)});
+            if (w.kind != Work::Scan || !w.cancel->load()) done_.push_back({std::move(w),std::move(listing),std::move(viewer)});
         }
     }
 }
@@ -186,14 +198,19 @@ Result Core::expand(int p, Tab& t, Id id) {
 }
 bool Core::poll() {
     std::deque<Done> done;
-    { std::lock_guard<std::mutex> lock(mutex_); done.swap(done_); }
+    { std::lock_guard<std::mutex> lock(mutex_); done.swap(done_); for (const auto& d : done) if (d.work.kind == Work::Copy) copyBytes_ -= d.work.queuedBytes; }
     bool changed = false;
+    for (auto& pair : jobs_) {
+        auto& j = pair.second;
+        if (j.state == JobState::Queued && j.progress && j.progress->started.load()) { j.state = JobState::Running; changed = true; }
+    }
     for (auto& d : done) {
         auto& w = d.work;
         if (w.kind != Work::Scan) {
             auto& job = jobs_[w.job]; job.error = d.listing.error;
-            job.state = job.error ? JobState::Failed : JobState::Succeeded;
-            if (!job.error && !d.viewer.empty()) viewers_.push_back(d.viewer);
+            job.state = w.cancel->load() ? JobState::Cancelled : job.error ? JobState::Failed : JobState::Succeeded;
+            if (job.state == JobState::Cancelled) job.error = {};
+            if (job.state == JobState::Succeeded && !d.viewer.empty()) viewers_.push_back(d.viewer);
             changed = true; continue;
         }
         Tab* t = mutable_tab(w.panel,w.tab);
@@ -367,7 +384,19 @@ Result Core::execute(const Command& c) {
             t->options = c.options; if (c.action == Action::FilterSet) init_tree(*t);
             return navigate(c.panel,*t,t->path,-1,true);
         case Action::JobCancel:
-            if (c.job) { auto it = jobs_.find(c.job); if (it != jobs_.end() && it->second.cancel && it->second.state == JobState::Running) { it->second.cancel->store(true); it->second.state = JobState::Cancelled; } break; }
+            if (c.job) {
+                auto it = jobs_.find(c.job);
+                if (it != jobs_.end() && it->second.cancel && job_pending(it->second.state)) {
+                    it->second.cancel->store(true);
+                    it->second.state = it->second.bytes ? JobState::Cancelling : JobState::Cancelled;
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    for (auto* queue : {&copies_,&queue_}) {
+                        auto pending = std::find_if(queue->begin(),queue->end(),[&](const Work& w){return w.job == c.job && w.kind != Work::Scan;});
+                        if (pending != queue->end()) {done_.push_back({std::move(*pending),{}, {}}); queue->erase(pending); break;}
+                    }
+                }
+                break;
+            }
             cancel(*t); t->error = {"cancelled","Navigation cancelled"};
             for (auto& kv : t->tree) if (kv.second.load == Load::Loading) {
                 kv.second.cancel->store(true); kv.second.load = Load::Unloaded;
@@ -386,10 +415,13 @@ Result Core::execute(const Command& c) {
                 auto source = t->path/e.name;
                 if (!source.is_remote() && c.action != Action::FileCopy) { r.launchPath = source; r.viewOnly = c.action == Action::FileView; return r; }
                 w.sources.push_back(source);
+                w.queuedBytes += sizeof(Location)+source.native().size()*sizeof(fs::path::value_type)+source.host.size()+source.remote.size()+128;
+                if (w.queuedBytes > 32*1024*1024) return {{"resource_limit","Copy selection exceeds 32 MiB queue budget"}};
             }
             if (w.sources.empty()) return {{"not_found","Select an entry first"}};
             w.job = next_++; w.cancel = std::make_shared<std::atomic<bool>>(false); w.bytes = std::make_shared<std::atomic<uint64_t>>(0);
-            Job j; j.id = w.job; j.cancel = w.cancel; j.bytes = w.bytes; jobs_[w.job] = j; r.job = w.job; prune_jobs();
+            w.progress = std::make_shared<TransferProgress>(); w.progress->totalEntries = w.sources.size();
+            Job j; j.id = w.job; j.cancel = w.cancel; j.bytes = w.bytes; j.progress = w.progress; j.destination = w.destination; j.state = JobState::Queued; jobs_[w.job] = j; r.job = w.job; prune_jobs();
             if (!submit(std::move(w))) { jobs_.erase(r.job); return {{"resource_limit","Job queue full"}}; }
             ++state_.revision; return r;
         }
@@ -403,7 +435,7 @@ void Core::start(const Location& left, const Location& right) {
     for (int p = 0; p < 2; ++p) { Command c; c.action = Action::TabCreate; c.panel = p; c.path = p ? right : left; execute(c); }
 }
 bool Core::busy() const {
-    for (const auto& item : jobs_) if (item.second.bytes && item.second.state == JobState::Running) return true;
+    for (const auto& item : jobs_) if (item.second.bytes && job_pending(item.second.state)) return true;
     for (const auto& p : state_.panels) for (const auto& t : p.tabs) {
         if (t.loading) return true;
         for (const auto& kv : t.tree) if (kv.second.load == Load::Loading) return true;

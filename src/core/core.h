@@ -106,8 +106,16 @@ struct Command {
     std::optional<Id> expectedRevision;
 };
 struct Result { Error error; Id tab = 0, job = 0; Location launchPath{}; bool save = false, viewOnly = false; std::vector<std::string> connections{}; };
-enum class JobState { Running, Succeeded, Failed, Cancelled };
-struct Job { Id id = 0; JobState state = JobState::Running; Error error{}; Cancel cancel; std::shared_ptr<std::atomic<uint64_t>> bytes; };
+enum class JobState { Running, Succeeded, Failed, Cancelled, Queued, Cancelling };
+struct TransferProgress {
+    std::atomic<bool> started{false};
+    std::atomic<uint64_t> completedEntries{0};
+    uint64_t totalEntries = 0;
+    std::mutex mutex;
+    Location current;
+};
+inline bool job_pending(JobState s) { return s == JobState::Running || s == JobState::Queued || s == JobState::Cancelling; }
+struct Job { Id id = 0; JobState state = JobState::Running; Error error{}; Cancel cancel; std::shared_ptr<std::atomic<uint64_t>> bytes; std::shared_ptr<TransferProgress> progress; Location destination; };
 struct SavedTab {
     Location path;
     fs::path focus, anchor;
@@ -140,6 +148,8 @@ private:
         std::vector<Location> sources;
         Location destination;
         std::shared_ptr<std::atomic<uint64_t>> bytes;
+        std::shared_ptr<TransferProgress> progress;
+        size_t queuedBytes = 0;
         int panel = 0; Id tab = 0, node = 0, generation = 0, job = 0;
         Location path; fs::path focusAfter;
         int historyTarget = -1;
@@ -158,12 +168,14 @@ private:
     std::mutex mutex_;
     std::condition_variable cv_;
     std::deque<Work> queue_;
+    std::deque<Work> copies_;
+    size_t copyBytes_ = 0;
     std::deque<Done> done_;
     std::vector<std::thread> workers_;
     std::vector<Cancel> running_;
     bool stopping_ = false;
     Tab* mutable_tab(int, Id = 0);
-    void worker();
+    void worker(bool copies = false);
     bool submit(Work);
     Result navigate(int, Tab&, Location, int historyTarget = -1, bool refresh = false, fs::path focusAfter = {});
     void init_tree(Tab&);

@@ -1,5 +1,11 @@
 # Development log
 
+## 2026-10-01: queued copies with progress and cancellation
+
+Separated FIFO copies onto one dedicated worker, leaving two workers for scans/views. Submission captures source marks and destination; queue admission bounds waiting jobs and retained source descriptors. Added Queued/Cancelling states, root/byte progress and worker-acknowledged cancellation. Cancelled waiting jobs leave the queue immediately. F5 accepts subsequent batches, Escape cancels the displayed job, and Shift+Escape cancels window transfers. Destination refresh respects subsequent navigation; latest failure survives later successful jobs.
+
+Added local queue tests for 600 selected files, destination capture, FIFO/conflict continuation and cancellation; live SSH tests for queued binary uploads and queued cancellation; native progress/queue/cancel test with 2,000 nested files. The GUI harness attaches its input queue to set deterministic modifier state before posting Escape (desktop synthetic input alone did not reliably deliver Shift). Windows/Linux suites, live SSH and native regressions pass. The copy spec distinguishes implemented behavior from deferred conflict resolution, persistent jobs, notifications and model-facing commands.
+
 ## 2026-09-27: consistent mouse input after keyboard navigation
 
 The report list used custom full-row cursor painting and explicit keyboard navigation, while mouse input still followed native selection and label hit-testing. Added a list subclass owning left-button down/up/double-click, full-width row hit detection and explicit cursor/mark semantics. Plain clicks preserve marks; Ctrl toggles and Shift adds a range; double-click navigates the clicked entry. This also avoids native selection/drag tracking for the intercepted left-button sequence. No persistent mouse capture is introduced.

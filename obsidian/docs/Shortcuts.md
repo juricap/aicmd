@@ -20,6 +20,9 @@
 | Ctrl+H | Show hidden/system entries |
 | F4 | Open focused file in jptxt |
 | Escape | Cancel navigation (or cancel path edit) |
+| F5 | Queue marked entries or cursor entry for copying to the other panel |
+| Escape during transfer | Cancel the displayed transfer (path editing takes priority) |
+| Shift+Escape during transfer | Cancel all transfers queued/running in this window |
 | Alt+F4 | Exit and save session |
 
 F3 opens jptxt read-only; F4 inside jptxt enables editing without restarting. F5 copies to the other panel; F6-F8 remain reserved.

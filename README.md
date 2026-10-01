@@ -32,7 +32,7 @@ Development: https://github.com/juricap/aicmd, branch main.
 
 Media: optional native **aiview** plays local/SSH images, video and audio. Run `scripts/setup-aiview.ps1` once for the pinned libmpv runtime, then build normally. Space opens media; PgUp/PgDn/Home/End browse; arrows seek five seconds; comma/period step frames; Ctrl+C copies the image/frame. A local MCP/function-call adapter also exposes controls and explicit PNG frame capture. See [aiview usage and agent API](obsidian/docs/Aiview.md).
 
-SSH: Alt+F1/F2 -> SSH -> config alias. F3 views; F5 copies to the other panel. See [SSH usage and limits](obsidian/docs/SSH.md). The config is rediscovered whenever the drive menu opens.
+SSH: Alt+F1/F2 -> SSH -> config alias. F3 views; F5 queues copies to the other panel with byte/entry progress. Escape cancels the displayed transfer; Shift+Escape cancels all. Large selections run sequentially in the background. See [copy jobs and next steps](obsidian/docs/Copy-jobs.md). See [SSH usage and limits](obsidian/docs/SSH.md). The config is rediscovered whenever the drive menu opens.
 
 ```powershell
 .\build\aicmd-cli.exe ssh-hosts

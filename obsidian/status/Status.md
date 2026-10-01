@@ -1,5 +1,9 @@
 # Status
 
+2026-10-01 copy increment: F5 accepts successive local/SSH copy batches into a bounded FIFO serviced by a dedicated worker. Progress reports bytes, selected-root counts and queue depth; Escape cancels the displayed transfer and Shift+Escape cancels all window transfers. Browsing remains independent. Existing destinations fail that job without prompting; later jobs continue. Completed files remain on interruption. Jobs currently end with the process. See [copy design](../docs/Copy-jobs.md) for deferred decisions, durable journals, agent commands and unattended notifications.
+
+Verified this increment: all four Windows and Linux CTest suites; live Windows-to-ai SSH suite (49 checks, including queued 8 MiB uploads and cancellation); native browsing/viewing/copy regression; native 2,000-file progress, second queued batch, modifier-controlled Shift+Escape cancellation and post-copy navigation. Linux isolated build: `/data/devel/aicmd-check-copy-20261001`. GUI artifacts are ignored under `artifacts/copy-gui-*`. These checks do not certify WAN performance, crash recovery or hours-long unattended operation.
+
 2026-09-27 mouse follow-up: fixed native left-click selection conflicting with independent keyboard cursor/marks. Full-width row clicks now move the cursor without turning the clicked item red or clearing existing marks. Ctrl+click toggles marks; Shift+click adds a range. Native smoke verifies alternating keys/clicks across name, metadata and row-tail positions, panel focus, blank space, parent-row exclusion and double-click navigation. Windows build (all three test suites), native GUI smoke and media/commander return tests pass. This is a Windows UI change; Linux code is unchanged.
 
 2026-09-22 — v0.1.0 development. First usable compact Windows browser implemented and validated. Broader M1 acceptance items remain in the todo list.
