@@ -9,5 +9,14 @@ using Progress = std::function<void(uint64_t)>;
 // Regular-file copy. Exclusive destination creation; never silently overwrites.
 void copy_file(const Location& source,const Location& destination,const Cancel&,const Progress& = {});
 void copy_location(const Location& source,const Location& destination,const Cancel&,const Progress& = {});
+// Throws unless name is one component valid on the parent's filesystem.
+void validate_name(const Location& parent,const fs::path& name);
+void make_directory(const Location&,const Cancel&);
+// Same-host no-overwrite rename. Returns false when a copy is required (another host or volume).
+bool rename_location(const Location& from,const Location& to,const Cancel&);
+// Removes links, never their targets. trash=true uses the Windows Recycle Bin; unsupported elsewhere.
+void delete_location(const Location&,bool trash,const Cancel&,const std::function<void()>& removed = {});
+// Rename when possible; otherwise copy, then delete the source only after the copy completes.
+void move_location(const Location& source,const Location& destination,const Cancel&,const Progress& = {});
 fs::path stage_view(const Location&,const Cancel&,const Progress& = {});
 }

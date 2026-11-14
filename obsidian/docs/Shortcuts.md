@@ -21,11 +21,16 @@
 | F4 | Open focused file in jptxt |
 | Escape | Cancel navigation (or cancel path edit) |
 | F5 | Queue marked entries or cursor entry for copying to the other panel |
+| F6 | Move marked entries or cursor entry to the other panel (rename on the same volume/host, otherwise copy then delete source) |
+| Shift+F6 | Rename the cursor entry in place; the dialog preselects the name without its extension |
+| F7 | Create a folder in the current directory and place the cursor on it |
+| F8 / Delete | Move marked entries or cursor entry to the Recycle Bin (local fixed drives) |
+| Shift+F8 / Shift+Delete | Permanently delete; remote (SSH) deletes are always permanent and say so |
 | Escape during transfer | Cancel the displayed transfer (path editing takes priority) |
 | Shift+Escape during transfer | Cancel all transfers queued/running in this window |
 | Alt+F4 | Exit and save session |
 
-F3 opens jptxt read-only; F4 inside jptxt enables editing without restarting. F5 copies to the other panel; F6-F8 remain reserved.
+F3 opens jptxt read-only; F4 inside jptxt enables editing without restarting. F5 copies and F6 moves to the other panel. No operation overwrites: an existing destination fails only that job. Move and delete consume marks when queued. Folder deletes are recursive and remove links/junctions without following them.
 
 | Selection key | Action |
 |---|---|

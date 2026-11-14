@@ -88,7 +88,7 @@ enum class Action {
     SessionGet, CapabilitiesGet, PanelActivate, PanelConfigure, TabCreate, TabActivate,
     TabClose, TabCycle, Navigate, Parent, Back, Forward, Refresh, TreeExpand, TreeCollapse,
     TreeReveal, SelectionSet, ViewportSet, SortSet, FilterSet, JobGet, JobCancel,
-    FileEdit, FileView, FileCopy, ConnectionsGet, SessionSave, SelectionPattern, BookmarkAdd, BookmarkRemove, AppQuit
+    FileEdit, FileView, FileCopy, FileMove, FileRename, FileDelete, DirCreate, ConnectionsGet, SessionSave, SelectionPattern, BookmarkAdd, BookmarkRemove, AppQuit
 };
 struct CommandInfo { Action action; const char* name; const char* description; const char* effect; };
 const std::vector<CommandInfo>& commands();
@@ -107,6 +107,7 @@ struct Command {
 };
 struct Result { Error error; Id tab = 0, job = 0; Location launchPath{}; bool save = false, viewOnly = false; std::vector<std::string> connections{}; };
 enum class JobState { Running, Succeeded, Failed, Cancelled, Queued, Cancelling };
+enum class JobKind { View, Copy, Move, Rename, Delete, Mkdir };
 struct TransferProgress {
     std::atomic<bool> started{false};
     std::atomic<uint64_t> completedEntries{0};
@@ -115,7 +116,8 @@ struct TransferProgress {
     Location current;
 };
 inline bool job_pending(JobState s) { return s == JobState::Running || s == JobState::Queued || s == JobState::Cancelling; }
-struct Job { Id id = 0; JobState state = JobState::Running; Error error{}; Cancel cancel; std::shared_ptr<std::atomic<uint64_t>> bytes; std::shared_ptr<TransferProgress> progress; Location destination; };
+// bytes counts transferred bytes, or removed entries for Delete. source is the directory the entries came from.
+struct Job { Id id = 0; JobState state = JobState::Running; JobKind kind = JobKind::View; Error error{}; Cancel cancel; std::shared_ptr<std::atomic<uint64_t>> bytes; std::shared_ptr<TransferProgress> progress; Location destination, source; };
 struct SavedTab {
     Location path;
     fs::path focus, anchor;
@@ -145,6 +147,8 @@ public:
 private:
     struct Work {
         enum Kind { Scan, View, Copy } kind = Scan;
+        JobKind op = JobKind::Copy; // transfer-worker operation when kind == Copy
+        std::string name; bool trash = false;
         std::vector<Location> sources;
         Location destination;
         std::shared_ptr<std::atomic<uint64_t>> bytes;
@@ -183,5 +187,6 @@ private:
     Result expand(int, Tab&, Id);
     void cancel(Tab&);
     void prune_jobs();
+    Result queue_operation(const Command&, Tab&);
 };
 }

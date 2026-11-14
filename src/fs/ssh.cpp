@@ -7,7 +7,10 @@
 #include <sstream>
 #ifdef _WIN32
 #include <windows.h>
+#include <shellapi.h>
 #else
+#include <cerrno>
+#include <cstdio>
 #include <fcntl.h>
 #include <unistd.h>
 #endif
@@ -79,7 +82,8 @@ struct Sftp {
     void close(const std::string& handle) { auto p = request(4); p.str(handle); call(p,101); }
     void remove(const std::string& path) { auto p = request(13); p.str(path); call(p,101); }
     void rename(const std::string& from,const std::string& to) { auto p = request(18); p.str(from); p.str(to); call(p,101); }
-    void mkdir(const std::string& path) { auto p = request(14); p.str(path); p.u32(4); p.u32(0700); call(p,101); }
+    void mkdir(const std::string& path,uint32_t mode = 0700) { auto p = request(14); p.str(path); p.u32(4); p.u32(mode); call(p,101); }
+    void rmdir(const std::string& path) { auto p = request(15); p.str(path); call(p,101); }
     std::string realpath(const std::string& path) { auto p = request(16); p.str(path); auto r = call(p,104); if (r.get32() != 1) throw std::runtime_error("Invalid SFTP canonical path"); return r.str(); }
     std::string read(const std::string& handle,uint64_t offset,size_t size) {
         std::map<uint32_t,std::pair<size_t,size_t>> pending;
@@ -366,5 +370,129 @@ void copy_file(const Location& source,const Location& destination,const Cancel& 
         if (writer) writer->connection->sftp->pipe.kill();
         throw;
     }
+}
+void validate_name(const Location& parent,const fs::path& name) {
+    auto text = name.u8string();
+    if (text.empty() || text == "." || text == ".." || text.find('/') != std::string::npos || text.find('\0') != std::string::npos) throw std::runtime_error("Name must be a single, non-empty path component");
+    if (text.size() > 255) throw std::runtime_error("Name is too long");
+    if (!parent.is_remote()) local_name(name);
+}
+void make_directory(const Location& path,const Cancel& cancel) {
+    if (cancel && cancel->load()) throw std::runtime_error("Cancelled");
+    if (path.is_remote()) {
+        Access access(path.host,"write",cancel);
+        if (access->exists(path.remote)) throw std::runtime_error("An entry with that name already exists");
+        access->mkdir(path.remote,0777); return;
+    }
+    std::error_code ec;
+    if (!fs::create_directory(path.local,ec)) throw std::runtime_error(ec ? "Cannot create folder: "+ec.message() : "An entry with that name already exists");
+}
+static std::string lower_ascii(std::string s) { for (auto& c : s) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c-'A'+'a'); return s; }
+bool rename_location(const Location& from,const Location& to,const Cancel& cancel) {
+    if (from.host != to.host) return false;
+    if (from == to) throw std::runtime_error("Source and destination are identical");
+    if (cancel && cancel->load()) throw std::runtime_error("Cancelled");
+    if (from.is_remote()) {
+        Access access(from.host,"write",cancel);
+        // Case-only renames may stat as existing on case-insensitive servers; OpenSSH RENAME itself does not replace.
+        if (lower_ascii(from.remote) != lower_ascii(to.remote) && access->exists(to.remote)) throw std::runtime_error("Destination exists; no overwrite performed");
+        access->rename(from.remote,to.remote); return true;
+    }
+#ifdef _WIN32
+    // Without MOVEFILE_REPLACE_EXISTING an existing destination fails. Case-only renames succeed.
+    if (MoveFileExW(from.local.c_str(),to.local.c_str(),0)) return true;
+    auto error = GetLastError();
+    if (error == ERROR_NOT_SAME_DEVICE) return false;
+    if (error == ERROR_ALREADY_EXISTS || error == ERROR_FILE_EXISTS) throw std::runtime_error("Destination exists; no overwrite performed");
+    throw std::runtime_error("Rename failed: "+std::system_category().message(static_cast<int>(error)));
+#else
+    int result = -1;
+#if defined(__linux__) && defined(RENAME_NOREPLACE)
+    result = ::renameat2(AT_FDCWD,from.local.c_str(),AT_FDCWD,to.local.c_str(),RENAME_NOREPLACE);
+#elif defined(__APPLE__)
+    result = ::renamex_np(from.local.c_str(),to.local.c_str(),RENAME_EXCL);
+#else
+    if (fs::exists(fs::symlink_status(to.local))) errno = EEXIST; else result = ::rename(from.local.c_str(),to.local.c_str());
+#endif
+    if (!result) return true;
+    if (errno == EXDEV) return false;
+    if (errno == EEXIST || errno == ENOTEMPTY) throw std::runtime_error("Destination exists; no overwrite performed");
+    throw std::runtime_error("Rename failed: "+std::generic_category().message(errno));
+#endif
+}
+void delete_location(const Location& target,bool trash,const Cancel& cancel,const std::function<void()>& removed) {
+    if (target.empty() || target.parent_path() == target || target.filename().empty()) throw std::runtime_error("Refusing to delete a filesystem root");
+    size_t entries = 0;
+    auto tick = [&]{ if (cancel && cancel->load()) throw std::runtime_error("Delete cancelled"); if (++entries > 10000000) throw std::runtime_error("Delete entry limit reached"); };
+    if (target.is_remote()) {
+        if (trash) throw std::runtime_error("Remote servers have no Recycle Bin; use permanent delete");
+        Access access(target.host,"write",cancel);
+        std::function<void(const std::string&,int)> visit = [&](const std::string& path,int depth) {
+            tick(); if (depth > 256) throw std::runtime_error("Delete depth limit reached");
+            auto a = access->stat(path); // lstat: links are removed, never followed
+            if (a.directory()) {
+                auto listing = access->list(Location::ssh(target.host,path),false,cancel,64*1024*1024);
+                if (listing.error) throw std::runtime_error(listing.error.message);
+                for (const auto& e : listing.entries) visit(path+"/"+e.name.u8string(),depth+1);
+                access->rmdir(path);
+            } else access->remove(path);
+            if (removed) removed();
+        };
+        visit(target.remote,0); return;
+    }
+#ifdef _WIN32
+    if (trash) {
+        tick();
+        auto full = fs::absolute(target.local);
+        auto root = full.root_path().native();
+        auto type = GetDriveTypeW(root.c_str());
+        if (root.rfind(L"\\\\",0) == 0 || type == DRIVE_REMOTE || type == DRIVE_REMOVABLE) throw std::runtime_error("Recycle Bin is unavailable on network or removable drives; use Shift+F8 for permanent delete");
+        if (full.native().size() >= MAX_PATH) throw std::runtime_error("Path is too long for the Recycle Bin; use Shift+F8 for permanent delete");
+        if (!fs::exists(fs::symlink_status(full))) throw std::runtime_error("Entry no longer exists");
+        std::wstring from = full.native(); from.push_back(L'\0'); from.push_back(L'\0');
+        SHFILEOPSTRUCTW op{}; op.wFunc = FO_DELETE; op.pFrom = from.c_str();
+        op.fFlags = FOF_ALLOWUNDO|FOF_NOCONFIRMATION|FOF_NOERRORUI|FOF_SILENT|FOF_WANTNUKEWARNING;
+        int rc = SHFileOperationW(&op);
+        if (rc || op.fAnyOperationsAborted) throw std::runtime_error("Recycle Bin operation failed (code "+std::to_string(rc)+")");
+        if (removed) removed();
+        return;
+    }
+#else
+    if (trash) throw std::runtime_error("Trash is not implemented on this platform; use permanent delete");
+#endif
+    std::function<void(const fs::path&,int)> visit = [&](const fs::path& path,int depth) {
+        tick(); if (depth > 256) throw std::runtime_error("Delete depth limit reached");
+        auto status = fs::symlink_status(path);
+        bool recurse = fs::is_directory(status) && !fs::is_symlink(status);
+#ifdef _WIN32
+        auto attributes = GetFileAttributesW(path.c_str());
+        if (attributes == INVALID_FILE_ATTRIBUTES) throw std::runtime_error("Cannot read attributes: "+display_path(path));
+        if (attributes & FILE_ATTRIBUTE_REPARSE_POINT) recurse = false; // junctions and links: remove the link only
+        if (attributes & FILE_ATTRIBUTE_READONLY) SetFileAttributesW(path.c_str(),attributes & ~FILE_ATTRIBUTE_READONLY);
+#endif
+        if (recurse) for (const auto& child : fs::directory_iterator(path)) visit(child.path(),depth+1);
+#ifdef _WIN32
+        BOOL ok = (attributes & FILE_ATTRIBUTE_DIRECTORY) ? RemoveDirectoryW(path.c_str()) : DeleteFileW(path.c_str());
+        if (!ok) throw std::runtime_error("Cannot delete "+display_path(path)+": "+std::system_category().message(static_cast<int>(GetLastError())));
+#else
+        if (::remove(path.c_str())) throw std::runtime_error("Cannot delete "+display_path(path)+": "+std::generic_category().message(errno));
+#endif
+        if (removed) removed();
+    };
+    visit(target.local,0);
+}
+void move_location(const Location& source,const Location& destination,const Cancel& cancel,const Progress& progress) {
+    if (source.host == destination.host) {
+        Location a = source, b = destination;
+        if (!source.is_remote()) { a = fs::weakly_canonical(source.local); b = fs::weakly_canonical(destination.local); }
+        for (auto at = b.parent_path(); ; at = at.parent_path()) {
+            if (at == a) throw std::runtime_error("Destination is inside source");
+            if (at.empty() || at.parent_path() == at) break;
+        }
+    }
+    if (rename_location(source,destination,cancel)) return;
+    copy_location(source,destination,cancel,progress);
+    // The source is removed only after the complete copy succeeded.
+    delete_location(source,false,cancel);
 }
 }

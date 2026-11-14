@@ -34,7 +34,8 @@ First usable implementation is built and validated. Broader acceptance work rema
 - [ ] M2: generated schemas, MCP stdio, authenticated attachment to existing GUI session.
 - [ ] M3: terminal frontend usable over SSH; keyboard parity with GUI.
 - [ ] M4: macOS / Linux GUI frontends.
-- [ ] M5: copy/move/rename/mkdir/trash with explicit conflicts and partial completion reporting.
+- [x] M5a: move/rename/mkdir/Recycle Bin/permanent delete, local and SSH, no-overwrite (2026-11-14).
+- [ ] M5b: explicit conflict prompts (skip/rename/overwrite), per-item partial completion report, attribute/timestamp preservation.
 - [x] Explicit read-only jptxt viewer contract for F3; F4 enables editing in place.
 - [ ] M6: Gemini function/Live adapter over the shared commands.
 - [x] Configure GitHub remote and publish main with id_ghjuricap.

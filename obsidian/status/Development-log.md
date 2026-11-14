@@ -1,5 +1,9 @@
 # Development log
 
+## 2026-11-14: move, rename, mkdir and delete
+
+Added filesystem primitives shared by local and SFTP locations: name validation, mkdir, no-replace rename, recursive delete that never follows links/junctions (clears read-only attributes after confirmation), Windows Recycle Bin via SHFileOperation with network/removable drives refused rather than silently purged, and move as rename-or-copy-then-delete. Core gained four commands and a JobKind on jobs; completed write jobs refresh visible affected panels in the core instead of the GUI. GUI: F6, Shift+F6, F7, F8/Delete, Shift+F8/Shift+Delete, a centered input dialog with extension-preserving selection, and per-operation progress labels. A test bug (stale snapshot after an auto-refresh) and a PowerShell re-encoding mishap were caught during development. New file-ops suite, live SSH additions and four new GUI smoke stages pass on Windows; Linux suites pass on ai.
+
 ## 2026-10-01: queued copies with progress and cancellation
 
 Separated FIFO copies onto one dedicated worker, leaving two workers for scans/views. Submission captures source marks and destination; queue admission bounds waiting jobs and retained source descriptors. Added Queued/Cancelling states, root/byte progress and worker-acknowledged cancellation. Cancelled waiting jobs leave the queue immediately. F5 accepts subsequent batches, Escape cancels the displayed job, and Shift+Escape cancels window transfers. Destination refresh respects subsequent navigation; latest failure survives later successful jobs.

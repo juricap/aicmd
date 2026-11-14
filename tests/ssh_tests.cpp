@@ -81,6 +81,17 @@ int main(int argc,char** argv) {
             require(queued.job(a.job)->state == JobState::Succeeded && queued.job(b.job)->state == JobState::Succeeded && queued.job(c.job)->state == JobState::Cancelled,"SSH FIFO completion and queued cancellation");
             copy_file(base/"queue-b.bin",root/"queue-result.bin",cancel);
             require(contents(root/"queue-result.bin") == bytes && queued.job(b.job)->bytes->load() == bytes.size(),"Queued SSH copy bytes and progress are exact");
+            make_directory(base/"ops",cancel); require(fails([&]{make_directory(base/"ops",cancel);}),"Remote mkdir and existing-folder conflict");
+            copy_location(root/"tree",base/"ops"/"tree",cancel);
+            require(rename_location(base/"ops"/"tree",base/"ops"/fs::u8path(u8"名前 tree"),cancel),"Remote rename");
+            require(fails([&]{rename_location(base/"ops"/fs::u8path(u8"名前 tree"),base/"empty",cancel);}),"Remote rename never overwrites");
+            move_location(root/"tree-roundtrip",base/"ops"/"moved",cancel);
+            require(!fs::exists(root/"tree-roundtrip") && !provider->list(base/"ops"/"moved",false,cancel,1<<20).error,"Cross-host move copies then removes source");
+            move_location(base/"ops"/"moved",root/"moved-back",cancel);
+            require(contents(root/"moved-back"/"child") == "child" && provider->list(base/"ops"/"moved",false,cancel,1<<20).error,"Remote-to-local move");
+            require(fails([&]{delete_location(base/"ops",true,cancel);}),"Remote trash is refused");
+            size_t removed = 0; delete_location(base/"ops",false,cancel,[&]{++removed;});
+            require(removed == 3 && provider->list(base/"ops",false,cancel,1<<20).error,"Remote recursive permanent delete");
             auto finalListing = provider->list(base,false,cancel,32*1024*1024);
             require(!finalListing.error && std::none_of(finalListing.entries.begin(),finalListing.entries.end(),[](const Entry& e){return e.name == "queue-c.bin";}),"Cancelled SSH queued job leaves no destination");
         }

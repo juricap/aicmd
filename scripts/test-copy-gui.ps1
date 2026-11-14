@@ -48,7 +48,7 @@ try {
  [CopyGui]::SetForegroundWindow($window) | Out-Null
  Start-Sleep -Milliseconds 150
  [CopyGui]::CancelAll($window)
- Wait-For { [CopyGui]::Status($window) -match 'Transfers finished:.*2 cancelled' }
+ Wait-For { [CopyGui]::Status($window) -match 'Operations finished:.*2 cancelled' }
  if (Get-ChildItem "$fixture\dest" -Recurse -Filter '.aicmd-part-*') {throw 'Staging files remain after acknowledged cancellation'}
  & "$PSScriptRoot\assert-navigation.ps1" -Window $window
  'PASS native 2000-file progress, second queued batch, Shift+Escape cancellation, cleanup and navigation'

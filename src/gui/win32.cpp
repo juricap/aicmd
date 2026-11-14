@@ -65,6 +65,11 @@ struct App {
     // Native smoke mode exercises real controls and saves an isolated session.
     fs::path smokePath;
     int smokeStage = 0, smokeTicks = 0;
+    std::wstring smokeInput;
+    fs::path smokeFixture;
+    // Input dialog state.
+    std::wstring inputCaption, inputLabel, inputText;
+    int inputStem = -1;
     bool smokeFailed = false;
 };
 std::unique_ptr<App> app;
@@ -173,6 +178,39 @@ INT_PTR CALLBACK selection_dialog(HWND h,UINT message,WPARAM w,LPARAM l) {
         EndDialog(h,LOWORD(w)); return TRUE;
     }
     return FALSE;
+}
+INT_PTR CALLBACK input_dialog(HWND h,UINT message,WPARAM w,LPARAM) {
+    if (message == WM_INITDIALOG) {
+        SetWindowTextW(h,app->inputCaption.c_str()); SetDlgItemTextW(h,2011,app->inputLabel.c_str());
+        SetDlgItemTextW(h,2012,app->inputText.c_str()); SendDlgItemMessageW(h,2012,EM_SETLIMITTEXT,255,0);
+        SetFocus(GetDlgItem(h,2012));
+        SendDlgItemMessageW(h,2012,EM_SETSEL,0,app->inputStem >= 0 ? app->inputStem : -1);
+        return FALSE; // focus set explicitly
+    }
+    if (message == WM_COMMAND && (LOWORD(w) == IDOK || LOWORD(w) == IDCANCEL)) {
+        if (LOWORD(w) == IDOK) { wchar_t value[256]{}; GetDlgItemTextW(h,2012,value,256); app->inputText = value; }
+        EndDialog(h,LOWORD(w)); return TRUE;
+    }
+    return FALSE;
+}
+// Returns false when cancelled. Smoke mode answers from smokeInput without showing UI.
+bool prompt_text(const wchar_t* caption,const wchar_t* label,std::wstring& text,bool selectStem = false) {
+    if (!app->smokePath.empty()) { text = app->smokeInput; return !text.empty(); }
+    app->inputCaption = caption; app->inputLabel = label; app->inputText = text;
+    auto dot = text.find_last_of(L'.');
+    app->inputStem = selectStem && dot != std::wstring::npos && dot > 0 ? static_cast<int>(dot) : -1;
+    HWND before = GetFocus();
+    auto result = DialogBoxParamW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(2010),app->window,input_dialog,0);
+    if (before) SetFocus(before);
+    text = app->inputText;
+    return result == IDOK && !text.empty();
+}
+bool confirm(const std::wstring& text,const wchar_t* caption,bool warning = false) {
+    if (!app->smokePath.empty()) return true;
+    HWND before = GetFocus();
+    bool ok = MessageBoxW(app->window,text.c_str(),caption,MB_OKCANCEL|(warning ? MB_ICONWARNING|MB_DEFBUTTON2 : MB_ICONQUESTION)) == IDOK;
+    if (before) SetFocus(before);
+    return ok;
 }
 void mark_pattern(int p,int mode,bool dialog) {
     capture(p);
@@ -310,28 +348,59 @@ void run_command(Command c) {
     auto r = app->core.execute(c);
     if (r.error) app->notice = wide(r.error.message);
     else { app->notice.clear(); if (!r.launchPath.empty()) launch_editor(r.launchPath.local,r.viewOnly); }
-    if (!r.error && r.job && (c.action == Action::FileCopy || c.action == Action::FileView)) {
+    if (!r.error && r.job && app->core.job(r.job) && app->core.job(r.job)->bytes) {
         if (app->transfers.empty()) {app->transferError.clear(); app->transfersDone = app->transfersCancelled = 0;}
-        app->transfers.emplace_back(r.job,c.action == Action::FileCopy);
+        app->transfers.emplace_back(r.job,true);
         app->transfer = app->transfers.front().first;
-        app->notice = L"Transfer queued. Escape cancels current; Shift+Escape cancels all.";
+        app->notice = L"Operation queued. Escape cancels current; Shift+Escape cancels all.";
     }
     if (r.save) save();
     if (app->core.state().quit) PostMessageW(app->window,WM_CLOSE,0,0);
     app->dirty = true;
 }
-void action(Action a, int p = -1) {
+std::wstring subject(const Tab& t) {
+    if (!t.selection.empty()) return t.selection.size() == 1 ? L"\""+shown(*t.selection.begin())+L"\"" : std::to_wstring(t.selection.size())+L" marked entries";
+    return t.focus.empty() ? std::wstring{} : L"\""+shown(t.focus)+L"\"";
+}
+void action(Action a, int p = -1, bool flag = false) {
     if (p < 0) p = app->core.state().activePanel;
     capture(p);
-    if (a == Action::FileCopy) {
-        auto prompt = L"Copy marked entries (or the focused entry) to:\n"+shown(current(1-p)->path)+L"\n\nExisting destinations will not be overwritten.";
-        if (MessageBoxW(app->window,prompt.c_str(),L"Copy - F5",MB_OKCANCEL|MB_ICONQUESTION) != IDOK) return;
+    const Tab* active = current(p);
+    std::string text;
+    if (active && (a == Action::FileCopy || a == Action::FileMove || a == Action::FileDelete)) {
+        auto what = subject(*active);
+        if (what.empty()) { app->notice = L"Select an entry first"; return; }
+        if (a == Action::FileDelete) {
+            bool permanent = flag || active->path.is_remote();
+            auto prompt = (permanent ? L"Permanently delete " : L"Move to the Recycle Bin: ")+what+L"?";
+            if (active->path.is_remote()) prompt += L"\n\nRemote host: "+wide(active->path.host)+L". Remote deletes cannot be undone.";
+            else if (permanent) prompt += L"\n\nThis cannot be undone. Folders are deleted recursively; links are removed without touching their targets.";
+            if (!confirm(prompt,permanent ? L"Delete permanently - Shift+F8" : L"Delete - F8",permanent)) return;
+            flag = permanent;
+        } else {
+            auto prompt = std::wstring(a == Action::FileCopy ? L"Copy " : L"Move ")+what+L" to:\n"+shown(current(1-p)->path)+L"\n\nExisting destinations will not be overwritten.";
+            if (!confirm(prompt,a == Action::FileCopy ? L"Copy - F5" : L"Move - F6")) return;
+        }
     }
-    Command c; c.action = a; c.panel = p;
+    if (active && a == Action::DirCreate) {
+        std::wstring name;
+        if (!prompt_text(L"New folder - F7",(L"Create folder in "+shown(active->path)+L":").c_str(),name)) return;
+        text = fs::path(name).u8string();
+    }
+    if (active && a == Action::FileRename) {
+        if (active->focus.empty()) { app->notice = L"Select an entry first"; return; }
+        std::wstring name = active->focus.wstring(); bool directory = false;
+        if (active->snapshot) for (const auto& e : active->snapshot->entries) if (e.name == active->focus) directory = e.directory;
+        if (!prompt_text(L"Rename - Shift+F6",(L"Rename \""+shown(active->focus)+L"\" to:").c_str(),name,!directory)) return;
+        if (name == active->focus.wstring()) return;
+        text = fs::path(name).u8string();
+    }
+    active = current(p);
+    Command c; c.action = a; c.panel = p; c.flag = flag; if (!text.empty()) c.pattern = text;
     if (const auto* t = current(p)) {
         c.tab = t->id; c.options = t->options;
         if (a == Action::FilterSet) c.options.hidden = !c.options.hidden;
-        if (a == Action::FileEdit || a == Action::FileView || a == Action::FileCopy) { c.path = t->focus; c.snapshot = t->snapshot ? t->snapshot->id : 0; }
+        if (a == Action::FileEdit || a == Action::FileView || a == Action::FileCopy || a == Action::FileMove || a == Action::FileRename || a == Action::FileDelete || a == Action::DirCreate) { c.path = t->focus; c.snapshot = t->snapshot ? t->snapshot->id : 0; }
         if (a == Action::PanelConfigure) { auto& panel = app->core.state().panels[p]; c.flag = !panel.treeVisible; c.value = panel.treeWidth; }
     }
     run_command(c);
@@ -430,6 +499,10 @@ void menu() {
     HMENU file = CreatePopupMenu(); add(file,Action::FileEdit,L"&Edit in jptxt\tF4");
     add(file,Action::FileView,L"Read-only &viewer\tF3");
     add(file,Action::FileCopy,L"&Copy to other panel\tF5");
+    add(file,Action::FileMove,L"&Move to other panel\tF6");
+    add(file,Action::FileRename,L"&Rename\tShift+F6");
+    add(file,Action::DirCreate,L"New &folder\tF7");
+    add(file,Action::FileDelete,L"&Delete to Recycle Bin\tF8");
     AppendMenuW(file,MF_SEPARATOR,0,nullptr); add(file,Action::SessionSave,L"&Save session"); add(file,Action::AppQuit,L"E&xit");
     HMENU view = CreatePopupMenu(); add(view,Action::Refresh,L"&Refresh / Retry\tCtrl+R"); add(view,Action::FilterSet,L"Show &hidden files\tCtrl+H");
     HMENU tabs = CreatePopupMenu(); add(tabs,Action::TabCreate,L"&New tab\tCtrl+T"); add(tabs,Action::TabClose,L"&Close tab\tCtrl+W"); add(tabs,Action::TabCycle,L"Ne&xt tab\tCtrl+Tab");
@@ -527,7 +600,7 @@ void render() {
     const auto* t = current(app->core.state().activePanel);
     std::wstring status = app->notice;
     if (status.empty() && t && t->error) status = wide(t->error.message)+L"   |   Ctrl+R Retry";
-    if (status.empty()) status = L"F3 View   F4 Edit   F5 Copy   Tab Panel   Insert Mark   Num+ Select   Num- Unselect   Ctrl+D Bookmarks   Alt+F1/F2 Drives/SSH";
+    if (status.empty()) status = L"F3 View   F4 Edit   F5 Copy   F6 Move   Shift+F6 Rename   F7 MkDir   F8 Delete   Insert Mark   Num+/- Select   Ctrl+D Bookmarks   Alt+F1/F2 Drives/SSH";
     if (text(app->status) != status) SetWindowTextW(app->status,status.c_str());
     CheckMenuItem(GetMenu(app->window),MENU_BASE+static_cast<UINT>(Action::FilterSet),MF_BYCOMMAND|(t && t->options.hidden ? MF_CHECKED : MF_UNCHECKED));
     app->syncing = false; app->seen = app->core.state().revision; app->renderedNotice = app->notice;
@@ -666,6 +739,9 @@ bool key(MSG& msg,int testModifiers = -1) {
     if (msg.wParam == VK_F4 && !alt) { action(Action::FileEdit,p); return true; }
     if (msg.wParam == VK_F3) { action(Action::FileView,p); return true; }
     if (msg.wParam == VK_F5) { action(Action::FileCopy,p); return true; }
+    if (msg.wParam == VK_F6 && !alt) { action(shift ? Action::FileRename : Action::FileMove,p); return true; }
+    if (msg.wParam == VK_F7 && !alt) { action(Action::DirCreate,p); return true; }
+    if ((msg.wParam == VK_F8 || (msg.wParam == VK_DELETE && focus == v.list)) && !alt && !ctrl) { action(Action::FileDelete,p,shift); return true; }
     if (msg.wParam == VK_ESCAPE) {
         if (focus == v.path) end_path(p);
         else if (app->transfer) {
@@ -687,6 +763,14 @@ void save() {
     auto e = save_state(app->statePath,state);
     if (e) app->notice = wide(e.message);
     app->dirty = false; app->lastSave = GetTickCount64();
+}
+void focus_entry(int p,const char* name) {
+    const auto& v = app->panes[p]; if (!v.snapshot) return;
+    for (size_t i = 0; i < v.snapshot->entries.size(); ++i) if (v.snapshot->entries[i].name == name) {
+        ListView_SetItemState(v.list,-1,0,LVIS_SELECTED|LVIS_FOCUSED);
+        ListView_SetItemState(v.list,static_cast<int>(i)+1,LVIS_FOCUSED,LVIS_FOCUSED);
+    }
+    activate(p); SetFocus(v.list); capture(p);
 }
 void smoke() {
     if (app->smokePath.empty() || app->locationMenuOpen) return;
@@ -808,6 +892,32 @@ void smoke() {
         check(current(1)->requested == fs::current_path().parent_path());
     } else if (app->smokeStage == 9) {
         check(current(1)->path == fs::current_path().parent_path());
+        // File operations run in an ignored, disposable fixture beside the smoke report.
+        app->smokeFixture = app->smokePath.parent_path()/(app->smokePath.stem().wstring()+L"-fileops");
+        std::error_code ec; fs::remove_all(app->smokeFixture,ec);
+        fs::create_directories(app->smokeFixture/"src"); fs::create_directories(app->smokeFixture/"dst");
+        for (auto name : {"a.txt","b.txt"}) std::ofstream(app->smokeFixture/"src"/name) << name;
+        for (int p = 0; p < 2; ++p) { Command c; c.action = Action::Navigate; c.panel = p; c.path = app->smokeFixture/(p ? "dst" : "src"); run_command(c); }
+    } else if (app->smokeStage == 10) {
+        check(current(0)->path == Location(app->smokeFixture/"src") && current(1)->path == Location(app->smokeFixture/"dst"));
+        render(); activate(0); SetFocus(app->panes[0].list);
+        app->smokeInput = L"new folder"; press(VK_F7);
+    } else if (app->smokeStage == 11) {
+        check(fs::is_directory(app->smokeFixture/"src"/"new folder") && current(0)->focus == "new folder");
+        render(); focus_entry(0,"a.txt"); app->smokeInput = L"renamed.txt"; press(VK_F6,2);
+    } else if (app->smokeStage == 12) {
+        check(fs::exists(app->smokeFixture/"src"/"renamed.txt") && !fs::exists(app->smokeFixture/"src"/"a.txt") && current(0)->focus == "renamed.txt");
+        render(); focus_entry(0,"renamed.txt"); press(VK_F6);
+    } else if (app->smokeStage == 13) {
+        check(fs::exists(app->smokeFixture/"dst"/"renamed.txt") && !fs::exists(app->smokeFixture/"src"/"renamed.txt"));
+        bool listed = false; for (const auto& e : current(1)->snapshot->entries) listed |= e.name == "renamed.txt";
+        check(listed);
+        render(); focus_entry(0,"b.txt"); press(VK_DELETE,2);
+    } else if (app->smokeStage == 14) {
+        check(!fs::exists(app->smokeFixture/"src"/"b.txt"));
+        bool listed = false; for (const auto& e : current(0)->snapshot->entries) listed |= e.name == "b.txt";
+        check(!listed && app->transfers.empty());
+        std::error_code ec; fs::remove_all(app->smokeFixture,ec);
         PostMessageW(app->window,WM_CLOSE,0,0);
     }
     ++app->smokeStage;
@@ -843,19 +953,15 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
                     if (job->error) app->transferError = L"Job #"+std::to_wstring(job->id)+L": "+wide(job->error.message);
                     else if (job->state == JobState::Cancelled) ++app->transfersCancelled;
                     else ++app->transfersDone;
-                    auto destination = job->destination;
-                    if (it->second) for (int p = 0;p < 2;++p) {
-                        const auto* tab = current(p);
-                        if (tab && !tab->loading && tab->path == destination) {Command c; c.action = Action::Refresh; c.panel = p; app->core.execute(c);}
-                    }
                 }
                 it = app->transfers.erase(it);
             }
             app->transfer = app->transfers.empty() ? 0 : app->transfers.front().first;
             if (app->transfer) {
                 const auto* job = app->core.job(app->transfer);
-                auto phase = job->state == JobState::Queued ? L"Queued" : job->state == JobState::Cancelling ? L"Cancelling" : app->transfers.front().second ? L"Copying" : L"Downloading viewer file";
-                app->notice = std::wstring(phase)+L" #"+std::to_wstring(job->id)+L": "+std::to_wstring(job->bytes->load())+L" bytes";
+                const wchar_t* verbs[] = {L"Downloading viewer file",L"Copying",L"Moving",L"Renaming",L"Deleting",L"Creating folder"};
+                auto phase = job->state == JobState::Queued ? L"Queued" : job->state == JobState::Cancelling ? L"Cancelling" : verbs[static_cast<int>(job->kind)];
+                app->notice = std::wstring(phase)+L" #"+std::to_wstring(job->id)+L": "+std::to_wstring(job->bytes->load())+(job->kind == JobKind::Delete ? L" entries removed" : L" bytes");
                 if (job->progress) {
                     app->notice += L", "+std::to_wstring(job->progress->completedEntries.load())+L"/"+std::to_wstring(job->progress->totalEntries)+L" selected entries";
                     std::lock_guard<std::mutex> lock(job->progress->mutex);
@@ -864,8 +970,8 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
                 app->notice += L" | "+std::to_wstring(app->transfers.size()-1)+L" pending | Esc cancel, Shift+Esc cancel all";
                 if (!app->transferError.empty()) app->notice += L" | Earlier error: "+app->transferError;
             } else {
-                app->notice = L"Transfers finished: "+std::to_wstring(app->transfersDone)+L" completed, "+std::to_wstring(app->transfersCancelled)+L" cancelled. "+app->transferError;
-                if (app->transfersCancelled || !app->transferError.empty()) app->notice += L" Completed files remain; remote staging files may need cleanup after disconnect.";
+                app->notice = L"Operations finished: "+std::to_wstring(app->transfersDone)+L" completed, "+std::to_wstring(app->transfersCancelled)+L" cancelled. "+app->transferError;
+                if (app->transfersCancelled || !app->transferError.empty()) app->notice += L" Entries already processed stay processed; remote staging files may need cleanup after disconnect.";
             }
         }
         if (app->seen != app->core.state().revision || app->notice != app->renderedNotice) render();
@@ -965,7 +1071,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int show) {
         ShowWindow(hwnd,show); render(); SetFocus(app->panes[app->core.state().activePanel].list);
         MSG msg{};
         while (GetMessageW(&msg,nullptr,0,0) > 0) { if (!key(msg)) { TranslateMessage(&msg); DispatchMessageW(&msg); } }
-        if (!app->smokePath.empty()) { std::ofstream f(app->smokePath); f << (app->smokeFailed ? "FAIL" : "PASS") << " native GUI: compact full-width lists, tabs, parent, keyboard/mouse cursor and mark routes, full-row clicks, double-click navigation, persistence\n"; }
+        if (!app->smokePath.empty()) { if (app->smokeStage < 15) app->smokeFailed = true; std::ofstream f(app->smokePath); f << (app->smokeFailed ? "FAIL" : "PASS") << " native GUI: compact full-width lists, tabs, parent, keyboard/mouse cursor and mark routes, full-row clicks, double-click navigation, persistence, F7/Shift+F6/F6/Shift+Delete file operations (stages " << app->smokeStage << ")\n"; }
         int result = app->smokeFailed ? 1 : 0;
         CloseHandle(app->stateLock); DeleteObject(app->font); DeleteObject(app->activePath); DeleteObject(app->inactivePath); ImageList_Destroy(app->icons); app.reset(); return result;
     } catch (const std::exception& e) { MessageBoxW(nullptr,wide(e.what()).c_str(),L"aicmd",MB_ICONERROR); return 1; }

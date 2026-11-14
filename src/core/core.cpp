@@ -4,6 +4,10 @@
 #include <stdexcept>
 
 namespace ac {
+// Rename within one directory; a failed same-host rename is never turned into a copy.
+static void rename_or_move(const Location& from,const Location& to,const Cancel& cancel) {
+    if (!rename_location(from,to,cancel)) throw std::runtime_error("Rename crosses volumes");
+}
 const std::vector<CommandInfo>& commands() {
     static const std::vector<CommandInfo> items = {
         {Action::SessionGet,"session_get","Read session state","read"},
@@ -29,6 +33,10 @@ const std::vector<CommandInfo>& commands() {
         {Action::JobGet,"job_get","Read a job","read"},
         {Action::JobCancel,"job_cancel","Cancel tab work","session"},
         {Action::FileCopy,"file_copy","Copy marked entries to the other panel without overwriting","write"},
+        {Action::FileMove,"file_move","Move marked entries to the other panel without overwriting","write"},
+        {Action::FileRename,"file_rename","Rename the focused entry in place without overwriting","write"},
+        {Action::FileDelete,"file_delete","Delete marked entries (Recycle Bin, or permanently with flag)","destructive"},
+        {Action::DirCreate,"dir_create","Create a folder in the current directory","write"},
         {Action::ConnectionsGet,"connections_get","Discover SSH aliases from config","read"},
         {Action::FileEdit,"file_edit","Request host editor launch","launch"},
         {Action::FileView,"file_view","Request read-only viewer launch","launch"},
@@ -73,7 +81,9 @@ void Core::prune_jobs() {
 }
 bool Core::submit(Work w) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (w.kind == Work::Copy) {
+    // Quick in-place edits use the general workers so they do not wait behind long transfers.
+    if (w.kind == Work::Copy && (w.op == JobKind::Rename || w.op == JobKind::Mkdir)) w.queuedBytes = 0;
+    else if (w.kind == Work::Copy) {
         if (copies_.size() >= 64 || w.queuedBytes > 32*1024*1024-copyBytes_) return false;
         copyBytes_ += w.queuedBytes; copies_.push_back(std::move(w)); cv_.notify_all(); return true;
     }
@@ -109,8 +119,15 @@ void Core::worker(bool copies) {
                         continue;
                     }
                     uint64_t bytes = 0;
-                    copy_location(source,destination,w.cancel,[&](uint64_t n){bytes = n; w.bytes->store(completed+n);});
-                    completed += bytes;
+                    auto step = [&](uint64_t n){bytes = n; w.bytes->store(completed+n);};
+                    switch (w.op) {
+                    case JobKind::Move: move_location(source,destination,w.cancel,step); break;
+                    case JobKind::Rename: rename_or_move(source,source.parent_path()/fs::u8path(w.name),w.cancel); break;
+                    case JobKind::Mkdir: make_directory(source,w.cancel); break;
+                    case JobKind::Delete: delete_location(source,w.trash,w.cancel,[&]{w.bytes->store(++completed);}); break;
+                    default: copy_location(source,destination,w.cancel,step);
+                    }
+                    if (w.op != JobKind::Delete) completed += bytes;
                     if (w.progress) ++w.progress->completedEntries;
                 }
             } else listing = provider_->list(w.path,w.node != 0,w.cancel,w.budget);
@@ -211,6 +228,16 @@ bool Core::poll() {
             job.state = w.cancel->load() ? JobState::Cancelled : job.error ? JobState::Failed : JobState::Succeeded;
             if (job.state == JobState::Cancelled) job.error = {};
             if (job.state == JobState::Succeeded && !d.viewer.empty()) viewers_.push_back(d.viewer);
+            if (w.kind == Work::Copy) {
+                // Refresh visible listings that the operation changed, even after failure or cancellation (partial results).
+                fs::path focus = job.state == JobState::Succeeded && (w.op == JobKind::Mkdir || w.op == JobKind::Rename) ? fs::u8path(w.name) : fs::path{};
+                for (int p = 0; p < 2; ++p) {
+                    Tab* t = mutable_tab(p);
+                    if (!t || t->loading) continue;
+                    bool source = t->path == job.source && w.op != JobKind::Copy, destination = t->path == job.destination && w.op != JobKind::Delete && w.op != JobKind::Rename && w.op != JobKind::Mkdir;
+                    if (source || destination) navigate(p,*t,t->path,-1,true,source ? focus : fs::path{});
+                }
+            }
             changed = true; continue;
         }
         Tab* t = mutable_tab(w.panel,w.tab);
@@ -402,6 +429,7 @@ Result Core::execute(const Command& c) {
                 kv.second.cancel->store(true); kv.second.load = Load::Unloaded;
             }
             break;
+        case Action::FileMove: case Action::FileRename: case Action::FileDelete: case Action::DirCreate: return queue_operation(c,*t);
         case Action::FileCopy: case Action::FileView: case Action::FileEdit: {
             if (!t->snapshot || c.snapshot != t->snapshot->id) return {{"stale_snapshot","File listing changed"}};
             if (c.action == Action::FileEdit && t->path.is_remote()) return {{"unsupported","Remote edit/upload-on-save is not available. F3 stages a local view; F5 copies files."}};
@@ -421,7 +449,7 @@ Result Core::execute(const Command& c) {
             if (w.sources.empty()) return {{"not_found","Select an entry first"}};
             w.job = next_++; w.cancel = std::make_shared<std::atomic<bool>>(false); w.bytes = std::make_shared<std::atomic<uint64_t>>(0);
             w.progress = std::make_shared<TransferProgress>(); w.progress->totalEntries = w.sources.size();
-            Job j; j.id = w.job; j.cancel = w.cancel; j.bytes = w.bytes; j.progress = w.progress; j.destination = w.destination; j.state = JobState::Queued; jobs_[w.job] = j; r.job = w.job; prune_jobs();
+            Job j; j.id = w.job; j.kind = c.action == Action::FileCopy ? JobKind::Copy : JobKind::View; j.cancel = w.cancel; j.bytes = w.bytes; j.progress = w.progress; j.destination = w.destination; j.source = t->path; j.state = JobState::Queued; jobs_[w.job] = j; r.job = w.job; prune_jobs();
             if (!submit(std::move(w))) { jobs_.erase(r.job); return {{"resource_limit","Job queue full"}}; }
             ++state_.revision; return r;
         }
@@ -430,6 +458,37 @@ Result Core::execute(const Command& c) {
     }
     ++state_.revision;
     return r;
+}
+Result Core::queue_operation(const Command& c, Tab& t) {
+    if (!t.snapshot || c.snapshot != t.snapshot->id) return {{"stale_snapshot","File listing changed"}};
+    Work w; w.kind = Work::Copy; w.panel = c.panel; w.tab = t.id;
+    w.op = c.action == Action::FileMove ? JobKind::Move : c.action == Action::FileRename ? JobKind::Rename : c.action == Action::FileDelete ? JobKind::Delete : JobKind::Mkdir;
+    w.trash = c.action == Action::FileDelete && !c.flag;
+    if (w.op == JobKind::Mkdir || w.op == JobKind::Rename) {
+        w.name = c.pattern;
+        try { validate_name(t.path,fs::u8path(w.name)); } catch (const std::exception& e) { return {{"invalid_argument",e.what()}}; }
+    }
+    if (w.op == JobKind::Move) { const auto* target = tab(1-c.panel); if (!target) return {{"not_found","No destination panel"}}; w.destination = target->path; }
+    if (w.op == JobKind::Move && w.destination == t.path) return {{"invalid_argument","Source and destination folders are the same; use rename"}};
+    if (w.op == JobKind::Delete && t.path.is_remote() && w.trash) return {{"unsupported","Remote servers have no Recycle Bin; use permanent delete"}};
+    if (w.op == JobKind::Mkdir) w.sources.push_back(t.path/fs::u8path(w.name));
+    else for (const auto& e : t.snapshot->entries) {
+        bool selected = w.op != JobKind::Rename && !t.selection.empty() ? t.selection.count(e.name) != 0 : Location(e.name) == c.path;
+        if (!selected) continue;
+        if (w.op == JobKind::Rename && e.name.u8string() == w.name) return {{"invalid_argument","Name is unchanged"}};
+        auto source = t.path/e.name; w.sources.push_back(source);
+        w.queuedBytes += sizeof(Location)+source.native().size()*sizeof(fs::path::value_type)+source.host.size()+source.remote.size()+128;
+        if (w.queuedBytes > 32*1024*1024) return {{"resource_limit","Selection exceeds 32 MiB queue budget"}};
+    }
+    if (w.sources.empty()) return {{"not_found","Select an entry first"}};
+    w.job = next_++; w.cancel = std::make_shared<std::atomic<bool>>(false); w.bytes = std::make_shared<std::atomic<uint64_t>>(0);
+    w.progress = std::make_shared<TransferProgress>(); w.progress->totalEntries = w.sources.size();
+    Job j; j.id = w.job; j.kind = w.op; j.cancel = w.cancel; j.bytes = w.bytes; j.progress = w.progress; j.destination = w.destination; j.source = t.path; j.state = JobState::Queued;
+    Result r; r.job = w.job; jobs_[w.job] = j; prune_jobs();
+    if (!submit(std::move(w))) { jobs_.erase(r.job); return {{"resource_limit","Job queue full"}}; }
+    // Marks are consumed by the operation, as in Total Commander.
+    if (c.action != Action::DirCreate && c.action != Action::FileRename) t.selection.clear();
+    ++state_.revision; return r;
 }
 void Core::start(const Location& left, const Location& right) {
     for (int p = 0; p < 2; ++p) { Command c; c.action = Action::TabCreate; c.panel = p; c.path = p ? right : left; execute(c); }
