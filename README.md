@@ -2,11 +2,16 @@
 
 A minimal native, two-panel file manager following the compact, keyboard-first Total Commander / Midnight Commander workflow. C++17 and native APIs, following `../jptxt`.
 
-**v0.1.0 development:** Windows browsing, tabs, SSH/SFTP, F3 viewing, F5 copying, shared core, CLI, and persistence implemented. SSH terminal and model transports are planned on the same core.
+**v0.2.0:** Windows browsing, tabs, SSH/SFTP, F3 viewing, F5 copying, shared core, CLI, and persistence implemented. SSH terminal and model transports are planned on the same core.
 
 - [Vault home](obsidian/Home.md)
 - [Design](obsidian/docs/Design.md), [reference study](obsidian/docs/Reference-study.md), [shortcuts](obsidian/docs/Shortcuts.md)
 - [Todos](obsidian/todos/M1-Windows.md), [status](obsidian/status/Status.md), [development log](obsidian/status/Development-log.md)
+
+## Release package
+
+`scripts\package.ps1` builds, tests and writes a portable zip to `artifacts
+elease\` (add `-IncludeMpv` / `-IncludeJptxt` to bundle those separately licensed components). Without jptxt, F3/F4 use the associated Windows application; without libmpv, Space marks entries.
 
 ## Build and run
 

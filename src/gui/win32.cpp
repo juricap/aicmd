@@ -1,3 +1,4 @@
+#include "aicmd_version.h"
 #include "core/core.h"
 #include "host/state.h"
 #include "fs/ssh.h"
@@ -16,7 +17,7 @@
 using namespace ac;
 namespace {
 constexpr UINT TIMER = 1;
-constexpr int MENU_BASE = 1000;
+constexpr int MENU_BASE = 1000, HELP_KEYS = 1900, HELP_ABOUT = 1901;
 struct Pane {
     HWND tabs{}, path{}, pathLabel{}, list{}, summary{};
     Id tab = 0;
@@ -66,6 +67,7 @@ struct App {
     fs::path smokePath;
     int smokeStage = 0, smokeTicks = 0;
     std::wstring smokeInput;
+    bool mediaHintShown = false;
     fs::path smokeFixture;
     // Input dialog state.
     std::wstring inputCaption, inputLabel, inputText;
@@ -212,6 +214,14 @@ bool confirm(const std::wstring& text,const wchar_t* caption,bool warning = fals
     if (before) SetFocus(before);
     return ok;
 }
+void show_help(bool about) {
+    std::wstring text = about
+        ? L"aicmd " AICMD_VERSION_WSTRING L"\n\nCompact, keyboard-first two-panel file commander.\nLocal and SSH/SFTP browsing, viewing, copying, moving and deleting.\n\nSession: %LOCALAPPDATA%\\aicmd\\session.json"
+        : L"Tab\tswitch panel\nEnter / Backspace\topen / parent\nInsert, Shift+Space\tmark\nNum+ / Num- / Num*\tselect / unselect / invert\nCtrl+A\tmark all\n\nF3 / F4\tview / edit (jptxt)\nF5\tcopy to other panel\nF6\tmove to other panel\nShift+F6\trename\nF7\tnew folder\nF8 / Delete\tRecycle Bin\nShift+F8 / Shift+Delete\tdelete permanently\nEscape\tcancel current job (Shift: all)\n\nCtrl+T / Ctrl+W\tnew / close tab\nCtrl+Tab\tnext tab\nCtrl+L\tedit path (ssh://alias/path)\nCtrl+D\tbookmarks\nAlt+F1 / Alt+F2\tdrives and SSH hosts\nAlt+Left / Alt+Right\tback / forward\nCtrl+R / Ctrl+H\trefresh / hidden files\nSpace\tmedia viewer (aiview)\n\nNothing is ever overwritten.";
+    HWND before = GetFocus();
+    MessageBoxW(app->window,text.c_str(),about ? L"About aicmd" : L"Keyboard shortcuts - F1",MB_OK|MB_ICONINFORMATION);
+    if (before) SetFocus(before);
+}
 void mark_pattern(int p,int mode,bool dialog) {
     capture(p);
     if (dialog) {
@@ -278,7 +288,16 @@ void launch_editor(const fs::path& file,bool viewOnly) {
         for (auto& candidate : candidates) if (fs::is_regular_file(candidate,ec)) { executable = candidate; break; }
         if (executable.empty()) { wchar_t found[32768]{}; if (SearchPathW(nullptr,L"jptxt.exe",nullptr,32768,found,nullptr)) executable = found; }
     }
-    if (executable.empty()) { app->notice = L"jptxt not found. Set AICMD_EDITOR or start with --editor <jptxt.exe>."; return; }
+    if (executable.empty()) {
+        // Without jptxt, use Windows file associations: "edit" when registered, else Notepad for editing.
+        auto shell = [&](const wchar_t* verb,const wchar_t* program,const std::wstring& target) {
+            return reinterpret_cast<INT_PTR>(ShellExecuteW(app->window,verb,program ? program : target.c_str(),program ? quote_arg(target).c_str() : nullptr,file.parent_path().c_str(),SW_SHOWNORMAL)) > 32;
+        };
+        bool ok = viewOnly ? shell(L"open",nullptr,file.native()) : (shell(L"edit",nullptr,file.native()) || shell(L"open",L"notepad.exe",file.native()));
+        app->notice = ok ? (viewOnly ? L"jptxt not found; opened with the associated application (not read-only)." : L"jptxt not found; opened with the default editor. Set AICMD_EDITOR for jptxt.")
+                         : L"jptxt not found and no associated application. Set AICMD_EDITOR or start with --editor <jptxt.exe>.";
+        return;
+    }
     bool modern = editor_protocol2(executable);
     if (viewOnly && !modern) { app->notice = L"F3 requires jptxt 0.2.0+ with read-only support. Configure the updated jptxt executable."; return; }
     if (!modern) for (wchar_t c : file.native()) if (c < 32) { app->notice = L"This older jptxt cannot receive control characters in paths."; return; }
@@ -297,6 +316,16 @@ bool launch_media(int p) {
     const auto& focused = tab->snapshot->entries[row-1];
     if (focused.directory || av::kind(focused.name) == av::Kind::Unknown) return false;
     if (app->mediaProcess) {app->notice = L"A media viewer is already open for this commander. Close it before opening another folder."; return true;}
+    {
+        // The media viewer is optional; without it Space keeps its commander meaning (mark).
+        wchar_t module[32768]{}; GetModuleFileNameW(nullptr,module,32768);
+        auto dir = fs::path(module).parent_path(); std::error_code ec;
+        bool runtime = fs::is_regular_file(dir/L"libmpv-2.dll",ec) || _wgetenv(L"AIVIEW_MPV_DLL");
+        if (!fs::is_regular_file(dir/L"aiview.exe",ec) || !runtime) {
+            if (!app->mediaHintShown) { app->notice = L"Media viewer not installed (aiview.exe + libmpv-2.dll); Space marks instead."; app->mediaHintShown = true; }
+            return false;
+        }
+    }
     capture(p);
     try {
         wchar_t module[32768]{}; GetModuleFileNameW(nullptr,module,32768);
@@ -506,7 +535,9 @@ void menu() {
     AppendMenuW(file,MF_SEPARATOR,0,nullptr); add(file,Action::SessionSave,L"&Save session"); add(file,Action::AppQuit,L"E&xit");
     HMENU view = CreatePopupMenu(); add(view,Action::Refresh,L"&Refresh / Retry\tCtrl+R"); add(view,Action::FilterSet,L"Show &hidden files\tCtrl+H");
     HMENU tabs = CreatePopupMenu(); add(tabs,Action::TabCreate,L"&New tab\tCtrl+T"); add(tabs,Action::TabClose,L"&Close tab\tCtrl+W"); add(tabs,Action::TabCycle,L"Ne&xt tab\tCtrl+Tab");
+    HMENU help = CreatePopupMenu(); AppendMenuW(help,MF_STRING,HELP_KEYS,L"&Keyboard shortcuts\tF1"); AppendMenuW(help,MF_STRING,HELP_ABOUT,L"&About aicmd");
     AppendMenuW(bar,MF_POPUP,reinterpret_cast<UINT_PTR>(file),L"&File"); AppendMenuW(bar,MF_POPUP,reinterpret_cast<UINT_PTR>(view),L"&View"); AppendMenuW(bar,MF_POPUP,reinterpret_cast<UINT_PTR>(tabs),L"&Tabs");
+    AppendMenuW(bar,MF_POPUP,reinterpret_cast<UINT_PTR>(help),L"&Help");
     SetMenu(app->window,bar);
 }
 void layout() {
@@ -600,7 +631,7 @@ void render() {
     const auto* t = current(app->core.state().activePanel);
     std::wstring status = app->notice;
     if (status.empty() && t && t->error) status = wide(t->error.message)+L"   |   Ctrl+R Retry";
-    if (status.empty()) status = L"F3 View   F4 Edit   F5 Copy   F6 Move   Shift+F6 Rename   F7 MkDir   F8 Delete   Insert Mark   Num+/- Select   Ctrl+D Bookmarks   Alt+F1/F2 Drives/SSH";
+    if (status.empty()) status = L"F1 Help   F3 View   F4 Edit   F5 Copy   F6 Move   Shift+F6 Rename   F7 MkDir   F8 Delete   Insert Mark   Num+/- Select   Ctrl+D Bookmarks   Alt+F1/F2 Drives/SSH";
     if (text(app->status) != status) SetWindowTextW(app->status,status.c_str());
     CheckMenuItem(GetMenu(app->window),MENU_BASE+static_cast<UINT>(Action::FilterSet),MF_BYCOMMAND|(t && t->options.hidden ? MF_CHECKED : MF_UNCHECKED));
     app->syncing = false; app->seen = app->core.state().revision; app->renderedNotice = app->notice;
@@ -693,6 +724,7 @@ bool key(MSG& msg,int testModifiers = -1) {
     for (int i = 0; i < 2; ++i) { auto& v = app->panes[i]; if (focus == v.path || focus == v.tabs || focus == v.list) p = i; }
     auto& v = app->panes[p];
     if (alt && (msg.wParam == VK_F1 || msg.wParam == VK_F2)) { location_menu(msg.wParam == VK_F1 ? 0 : 1,true); return true; }
+    if (msg.wParam == VK_F1 && !alt && !ctrl && app->smokePath.empty()) { show_help(false); return true; }
     if (ctrl && msg.wParam == 'D') { location_menu(p,false); return true; }
     if (ctrl && msg.wParam == 'L') { activate(p); edit_path(p); return true; }
     if (ctrl && msg.wParam == 'T') { action(Action::TabCreate,p); return true; }
@@ -929,6 +961,7 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
     case WM_NOTIFY: return notify(reinterpret_cast<NMHDR*>(l));
     case WM_COMMAND: {
         int id = LOWORD(w);
+        if (id == HELP_KEYS || id == HELP_ABOUT) { show_help(id == HELP_ABOUT); return 0; }
         if (id >= MENU_BASE && id < MENU_BASE+static_cast<int>(Action::AppQuit)+1) { action(static_cast<Action>(id-MENU_BASE)); return 0; }
         for (int p = 0; p < 2; ++p) {
             if (id == 100+p*100 && HIWORD(w) == STN_CLICKED) { activate(p); edit_path(p); }

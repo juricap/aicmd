@@ -1,5 +1,9 @@
 # Development log
 
+## 2026-11-14: release packaging
+
+Bumped to 0.2.0. Generated version header feeds both C++ and RC VERSIONINFO. Added Help menu/F1, optional-dependency fallbacks, and package.ps1. The package script's version check caught aiview-tool.exe missing its resource, and PowerShell 5.1 treating VsDevCmd stderr as fatal; both fixed. The packaged executable passes the native smoke from its staged folder.
+
 ## 2026-11-14: move, rename, mkdir and delete
 
 Added filesystem primitives shared by local and SFTP locations: name validation, mkdir, no-replace rename, recursive delete that never follows links/junctions (clears read-only attributes after confirmation), Windows Recycle Bin via SHFileOperation with network/removable drives refused rather than silently purged, and move as rename-or-copy-then-delete. Core gained four commands and a JobKind on jobs; completed write jobs refresh visible affected panels in the core instead of the GUI. GUI: F6, Shift+F6, F7, F8/Delete, Shift+F8/Shift+Delete, a centered input dialog with extension-preserving selection, and per-operation progress labels. A test bug (stale snapshot after an auto-refresh) and a PowerShell re-encoding mishap were caught during development. New file-ops suite, live SSH additions and four new GUI smoke stages pass on Windows; Linux suites pass on ai.

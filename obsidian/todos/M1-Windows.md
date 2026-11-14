@@ -1,5 +1,14 @@
 # M1: compact Windows directory browsing
 
+## Release readiness (v0.2.0)
+
+- [x] Version resource, F1 help/About, packaged zip with smoke test (`scripts/package.ps1`).
+- [x] Optional jptxt and libmpv with graceful fallbacks.
+- [ ] Choose project LICENSE (blocks public release); decide jptxt/libmpv bundling.
+- [ ] Interactive check of no-jptxt / no-libmpv fallbacks on a clean machine.
+- [ ] Code signing, installer or winget manifest; GitHub release upload (requires explicit go-ahead).
+- [ ] Application icon.
+
 - [x] Consistent full-row mouse cursor after keyboard navigation; plain clicks preserve marks, Ctrl/Shift clicks mark explicitly; native regression coverage (2026-09-27).
 
 First usable implementation is built and validated. Broader acceptance work remains below. [Design](../docs/Design.md), [status](../status/Status.md).
