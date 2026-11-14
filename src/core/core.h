@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <deque>
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -40,6 +41,9 @@ public:
     virtual ~Provider() = default;
     virtual std::vector<Location> roots() = 0;
     virtual Listing list(const Location&, bool directoriesOnly, const Cancel&, size_t budget) = 0;
+    // Streams unsorted entries; the visitor returns false to stop early (not an error).
+    // Links are reported, never resolved. lane selects an independent remote connection.
+    virtual Error enumerate(const Location&, const Cancel&, const std::function<bool(Entry&&)>& visit, const char* lane = "browse");
 };
 std::shared_ptr<Provider> local_provider();
 std::shared_ptr<Provider> filesystem_provider();
@@ -49,6 +53,7 @@ std::string safe_text(std::string);
 void sort_entries(std::vector<Entry>&, const Options&);
 bool matches_pattern(const fs::path& name, const std::string& pattern);
 
+class Search;
 struct Snapshot { Id id = 0; Location path; std::vector<Entry> entries; size_t bytes = 0; };
 enum class Load { Unloaded, Loading, Loaded, Failed };
 struct TreeNode {
@@ -74,6 +79,11 @@ struct Tab {
     bool loading = false;
     Error error;
     Cancel cancel;
+    // Search result tab: snapshot entries are paths relative to `path`, published progressively.
+    std::shared_ptr<Search> search;
+    std::vector<Entry> found;
+    int64_t searchPublished = 0;
+    bool searchFinal = false;
 };
 struct Panel { std::vector<Tab> tabs; Id active = 0; bool treeVisible = false; int treeWidth = 170; };
 struct Session {
@@ -88,7 +98,7 @@ enum class Action {
     SessionGet, CapabilitiesGet, PanelActivate, PanelConfigure, TabCreate, TabActivate,
     TabClose, TabCycle, Navigate, Parent, Back, Forward, Refresh, TreeExpand, TreeCollapse,
     TreeReveal, SelectionSet, ViewportSet, SortSet, FilterSet, JobGet, JobCancel,
-    FileEdit, FileView, FileCopy, FileMove, FileRename, FileDelete, DirCreate, ConnectionsGet, SessionSave, SelectionPattern, BookmarkAdd, BookmarkRemove, AppQuit
+    FileEdit, FileView, FileCopy, FileMove, FileRename, FileDelete, DirCreate, ConnectionsGet, SessionSave, SelectionPattern, BookmarkAdd, BookmarkRemove, SearchStart, AppQuit
 };
 struct CommandInfo { Action action; const char* name; const char* description; const char* effect; };
 const std::vector<CommandInfo>& commands();
@@ -101,6 +111,7 @@ struct Command {
     std::set<fs::path> selection;
     Options options;
     std::string pattern = "*";
+    std::string text; // search content
     int value = 0;
     bool flag = false;
     std::optional<Id> expectedRevision;
@@ -143,6 +154,7 @@ public:
     void restore(const SavedState&);
     SavedState save() const;
     bool busy() const;
+    bool searching() const; // separate from busy(): searches may run for a long time
     std::vector<fs::path> take_viewers() { auto out = std::move(viewers_); viewers_.clear(); return out; }
 private:
     struct Work {
@@ -187,6 +199,8 @@ private:
     Result expand(int, Tab&, Id);
     void cancel(Tab&);
     void prune_jobs();
+    void stop_search(Tab&);
+    bool publish_search(Tab&, bool force);
     Result queue_operation(const Command&, Tab&);
 };
 }

@@ -1,5 +1,7 @@
 #include "core.h"
 #include "fs/ssh.h"
+#include "search.h"
+#include <chrono>
 #include <algorithm>
 #include <stdexcept>
 
@@ -44,6 +46,7 @@ const std::vector<CommandInfo>& commands() {
         {Action::SelectionPattern,"selection_pattern","Add, remove, or invert marks matching a wildcard mask","session"},
         {Action::BookmarkAdd,"bookmark_add","Bookmark the current folder","session"},
         {Action::BookmarkRemove,"bookmark_remove","Remove a bookmarked folder","session"},
+        {Action::SearchStart,"search_start","Search names (and optional content) below a folder into a new result tab","session"},
         {Action::AppQuit,"app_quit","Quit session","session"}
     };
     return items;
@@ -150,8 +153,41 @@ void Core::cancel(Tab& t) {
     ++t.generation;
     t.loading = false;
 }
+void Core::stop_search(Tab& t) {
+    if (!t.search) return;
+    // Cancel now; join on a background thread so a blocked network call cannot freeze the caller.
+    t.search->cancel();
+    std::thread([s = std::move(t.search)]() mutable { s.reset(); }).detach();
+    t.found.clear(); t.searchFinal = false;
+}
+bool Core::publish_search(Tab& t, bool force) {
+    if (!t.search) return false;
+    auto hits = t.search->take();
+    for (auto& h : hits) { h.entry.name = std::move(h.relative); t.found.push_back(std::move(h.entry)); }
+    auto stats = t.search->stats();
+    auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    // Republishing copies the result list, so the interval grows with its size (about 1 s per 100k results).
+    auto interval = std::max<int64_t>(150,static_cast<int64_t>(t.found.size()/100));
+    bool final = stats.finished && !t.searchFinal;
+    if (!force && !final && (hits.empty() || now-t.searchPublished < interval)) return false;
+    auto snap = std::make_shared<Snapshot>(); snap->id = next_++; snap->path = t.path; snap->entries = t.found;
+    // Default order is discovery order: shallow folders first, as the lanes find them.
+    if (t.options.sort != Sort::Name || t.options.descending) sort_entries(snap->entries,t.options);
+    for (const auto& e : snap->entries) snap->bytes += sizeof(Entry)+e.name.native().size()*sizeof(fs::path::value_type);
+    t.snapshot = snap; t.searchPublished = now; t.searchFinal = stats.finished;
+    std::set<fs::path> available; for (const auto& e : snap->entries) available.insert(e.name);
+    for (auto it = t.selection.begin(); it != t.selection.end();) if (!available.count(*it)) it = t.selection.erase(it); else ++it;
+    if (!available.count(t.focus)) t.focus = snap->entries.empty() ? fs::path{} : snap->entries.front().name;
+    return true;
+}
 Result Core::navigate(int p, Tab& t, Location path, int target, bool refresh, fs::path focusAfter) {
     path = absolute_path(path,t.path);
+    if (t.search && refresh && path == t.path) {
+        auto query = t.search->query(); stop_search(t);
+        t.search = std::make_shared<Search>(provider_,query); t.searchPublished = 0;
+        publish_search(t,true); ++state_.revision; Result r; r.tab = t.id; return r;
+    }
+    stop_search(t);
     if (path.empty()) return {{"invalid_path","Empty location"}};
     cancel(t);
     t.requested = path; t.error = {}; t.loading = true;
@@ -233,7 +269,7 @@ bool Core::poll() {
                 fs::path focus = job.state == JobState::Succeeded && (w.op == JobKind::Mkdir || w.op == JobKind::Rename) ? fs::u8path(w.name) : fs::path{};
                 for (int p = 0; p < 2; ++p) {
                     Tab* t = mutable_tab(p);
-                    if (!t || t->loading) continue;
+                    if (!t || t->loading || t->search) continue;
                     bool source = t->path == job.source && w.op != JobKind::Copy, destination = t->path == job.destination && w.op != JobKind::Delete && w.op != JobKind::Rename && w.op != JobKind::Mkdir;
                     if (source || destination) navigate(p,*t,t->path,-1,true,source ? focus : fs::path{});
                 }
@@ -298,8 +334,13 @@ bool Core::poll() {
         }
         changed = true;
     }
+    for (auto& panel : state_.panels) for (auto& t : panel.tabs) if (t.search && publish_search(t,false)) changed = true;
     if (changed) ++state_.revision;
     return changed;
+}
+bool Core::searching() const {
+    for (const auto& panel : state_.panels) for (const auto& t : panel.tabs) if (t.search && !t.search->stats().finished) return true;
+    return false;
 }
 Result Core::execute(const Command& c) {
     if (c.expectedRevision && *c.expectedRevision != state_.revision) return {{"revision_conflict","Session changed"}};
@@ -337,6 +378,18 @@ Result Core::execute(const Command& c) {
         init_tree(fresh); panel.active = fresh.id; panel.tabs.push_back(std::move(fresh));
         return navigate(c.panel,panel.tabs.back(),panel.tabs.back().path);
     }
+    case Action::SearchStart: {
+        if (panel.tabs.size() >= 32) return {{"resource_limit","Maximum 32 tabs per panel"}};
+        Location root = c.path.empty() ? (t ? t->path : Location(fs::current_path())) : absolute_path(c.path,t ? t->path : Location(fs::current_path()));
+        if (root.empty()) return {{"invalid_path","Empty search location"}};
+        Tab fresh; fresh.id = next_++; fresh.path = root; fresh.requested = root; fresh.history = {root};
+        if (t) fresh.options = t->options;
+        SearchQuery query; query.root = root; query.mask = c.pattern.empty() ? "*" : c.pattern; query.text = c.text; query.hidden = fresh.options.hidden;
+        fresh.search = std::make_shared<Search>(provider_,query);
+        init_tree(fresh); publish_search(fresh,true);
+        panel.active = fresh.id; panel.tabs.push_back(std::move(fresh));
+        r.tab = panel.active; break;
+    }
     default:
         if (!t) return {{"not_found","Tab no longer exists"}};
         switch (c.action) {
@@ -355,6 +408,7 @@ Result Core::execute(const Command& c) {
         }
         case Action::TabClose: {
             if (panel.tabs.size() == 1) return {{"last_tab","Each panel needs at least one tab"}};
+            stop_search(*t);
             Id id = t->id; cancel(*t);
             for (auto& kv : t->tree) if (kv.second.cancel) kv.second.cancel->store(true);
             size_t index = 0; while (panel.tabs[index].id != id) ++index;
@@ -364,7 +418,7 @@ Result Core::execute(const Command& c) {
             if (!active.snapshot && !active.loading) return navigate(c.panel,active,active.path,-1,true);
             break;
         }
-        case Action::Navigate: return navigate(c.panel,*t,c.path);
+        case Action::Navigate: return navigate(c.panel,*t,c.path,-1,false,c.focus);
         case Action::Parent: return navigate(c.panel,*t,t->path.parent_path(),-1,false,t->path.filename());
         case Action::Back:
             if (!t->history.empty() && t->historyIndex) return navigate(c.panel,*t,t->history[t->historyIndex-1],static_cast<int>(t->historyIndex-1));
@@ -408,6 +462,7 @@ Result Core::execute(const Command& c) {
         }
         case Action::ViewportSet: if (t->anchor == c.anchor) return {}; t->anchor = c.anchor; break;
         case Action::SortSet: case Action::FilterSet:
+            if (t->search && c.action == Action::SortSet) { t->options = c.options; publish_search(*t,true); break; }
             t->options = c.options; if (c.action == Action::FilterSet) init_tree(*t);
             return navigate(c.panel,*t,t->path,-1,true);
         case Action::JobCancel:
@@ -424,6 +479,7 @@ Result Core::execute(const Command& c) {
                 }
                 break;
             }
+            if (t->search) { t->search->cancel(); break; }
             cancel(*t); t->error = {"cancelled","Navigation cancelled"};
             for (auto& kv : t->tree) if (kv.second.load == Load::Loading) {
                 kv.second.cancel->store(true); kv.second.load = Load::Unloaded;

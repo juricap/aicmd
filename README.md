@@ -27,7 +27,7 @@ Requires Visual Studio 2022 C++ tools; `build.bat` configures Release, builds, a
 
 Validation: `scripts\test-gui.ps1`, `scripts\benchmark.ps1`, `scripts\test-linux.ps1`. Windows and Linux pass the core, SSH/copy, media, copy-queue and file-operation suites. Details and limitations are in [status](obsidian/status/Status.md).
 
-Two full-width lists with compact tabs, path bars, and columns. Enter/Backspace browse; Tab switches panel; Ctrl+T/W creates/closes tabs; Ctrl+L edits the path; Insert/Shift+Space marks entries; Space opens media (marks other entries); F3/F4 view/edit in jptxt; F5 copy, F6 move, Shift+F6 rename, F7 new folder, F8 Recycle Bin, Shift+F8 permanent delete. Nothing is ever overwritten. Full list: [shortcuts](obsidian/docs/Shortcuts.md).
+Two full-width lists with compact tabs, path bars, and columns. Enter/Backspace browse; Tab switches panel; Ctrl+T/W creates/closes tabs; Ctrl+L edits the path; Insert/Shift+Space marks entries; Space opens media (marks other entries); F3/F4 view/edit in jptxt; F5 copy, F6 move, Shift+F6 rename, F7 new folder, F8 Recycle Bin, Shift+F8 permanent delete. Alt+F7 searches (results stream into a tab; Enter goes to the file). Nothing is ever overwritten. Full list: [shortcuts](obsidian/docs/Shortcuts.md).
 
 Session: `%LOCALAPPDATA%\aicmd\session.json`. Use `--session <file>` for an independent window. Set `AICMD_EDITOR` or `--editor <jptxt.exe>` if jptxt is not found automatically.
 

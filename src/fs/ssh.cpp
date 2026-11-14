@@ -106,6 +106,30 @@ struct Sftp {
         for (size_t at = 0; at < data.size(); at += 32768) { auto p = request(6); pending.insert(next-1); p.str(handle); p.u64(offset+at); p.str(data.substr(at,std::min<size_t>(32768,data.size()-at))); send(p); }
         while (!pending.empty()) { auto r = receive(); auto type = r.byte(); if (!pending.erase(r.get32()) || type != 101) throw std::runtime_error("Invalid SFTP write reply"); status(r); }
     }
+    // Streams READDIR batches without resolving links; stopping early closes the handle.
+    void enumerate(const Location& location,const Cancel& cancel,const std::function<bool(Entry&&)>& visit) {
+        auto p = request(11); p.str(location.remote); auto handle = call(p,102).str();
+        try {
+            for (bool more = true; more;) {
+                if (cancel && cancel->load()) throw std::runtime_error("Cancelled");
+                auto q = request(12); q.str(handle); auto id = next-1; send(q); auto r = receive(); auto type = r.byte();
+                if (r.get32() != id) throw std::runtime_error("Invalid directory response ID");
+                if (type == 101) { auto code = r.get32(); if (code == 1) break; throw std::runtime_error("SFTP listing failed: "+safe_text(r.str())); }
+                if (type != 104) throw std::runtime_error("Invalid SFTP listing");
+                auto count = r.get32(); if (count > 100000) throw std::runtime_error("Invalid SFTP entry count");
+                while (count--) {
+                    auto name = r.str(); r.str(); auto attr = attributes(r);
+                    if (name == "." || name == ".." || !more) continue;
+                    if (name.empty() || name.find('/') != std::string::npos || name.find('\0') != std::string::npos) throw std::runtime_error("Invalid SFTP entry name");
+                    Entry e; e.name = fs::u8path(name); e.directory = attr.directory(); e.link = attr.link(); e.hidden = name[0] == '.';
+                    if (attr.flags & 1) e.size = attr.size;
+                    if (attr.flags & 8) e.modified = attr.modified;
+                    if (!visit(std::move(e))) more = false;
+                }
+            }
+            close(handle);
+        } catch (...) { pipe.kill(); throw; }
+    }
     Listing list(const Location& location,bool dirs,const Cancel& cancel,size_t budget) {
         auto p = request(11); p.str(location.remote); auto handle = call(p,102).str(); Listing result;
         try {
@@ -164,6 +188,11 @@ public:
         if (!path.is_remote()) return local->list(path,dirs,cancel,budget);
         try { Access access(path.host,"browse",cancel); return access->list(path,dirs,cancel,budget); }
         catch (const std::exception& e) { return {{},{cancel && cancel->load() ? "cancelled" : "ssh",e.what()}}; }
+    }
+    Error enumerate(const Location& path,const Cancel& cancel,const std::function<bool(Entry&&)>& visit,const char* lane) override {
+        if (!path.is_remote()) return local->enumerate(path,cancel,visit,lane);
+        try { Access access(path.host,lane,cancel); access->enumerate(path,cancel,visit); return {}; }
+        catch (const std::exception& e) { return {cancel && cancel->load() ? "cancelled" : "ssh",e.what()}; }
     }
 };
 }
@@ -370,6 +399,45 @@ void copy_file(const Location& source,const Location& destination,const Cancel& 
         if (writer) writer->connection->sftp->pipe.kill();
         throw;
     }
+}
+bool file_contains(const Location& file,const std::string& needle,const Cancel& cancel,const char* lane) {
+    if (needle.empty()) return true;
+    std::string carry;
+    auto scan = [&](std::string chunk) {
+        for (auto& c : chunk) if (c >= 'A' && c <= 'Z') c = static_cast<char>(c-'A'+'a');
+        carry += chunk;
+        if (carry.find(needle) != std::string::npos) return true;
+        // Keep a needle-sized tail so matches spanning chunk boundaries are found.
+        if (carry.size() >= needle.size()) carry.erase(0,carry.size()-(needle.size()-1));
+        return false;
+    };
+    constexpr size_t chunk = 1024*1024;
+    if (file.is_remote()) {
+        Access access(file.host,lane,cancel);
+        auto attr = access->stat(file.remote);
+        if (!attr.regular() || !(attr.flags & 1)) return false;
+        auto handle = access->open(file.remote,false);
+        bool found = false;
+        try {
+            for (uint64_t offset = 0; offset < attr.size && !found; offset += chunk) {
+                if (cancel && cancel->load()) throw std::runtime_error("Cancelled");
+                found = scan(access->read(handle,offset,static_cast<size_t>(std::min<uint64_t>(chunk,attr.size-offset))));
+            }
+        } catch (...) { try { access->close(handle); } catch (...) {} throw; }
+        access->close(handle);
+        return found;
+    }
+    std::ifstream input(file.local,std::ios::binary);
+    if (!input) throw std::runtime_error("Cannot open file");
+    std::string buffer(chunk,'\0');
+    while (input) {
+        if (cancel && cancel->load()) throw std::runtime_error("Cancelled");
+        input.read(buffer.data(),buffer.size());
+        auto n = static_cast<size_t>(input.gcount());
+        if (!n) break;
+        if (scan(buffer.substr(0,n))) return true;
+    }
+    return false;
 }
 void validate_name(const Location& parent,const fs::path& name) {
     auto text = name.u8string();

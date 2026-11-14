@@ -112,17 +112,23 @@ public:
 #endif
     }
     Listing list(const Location& location, bool dirs, const Cancel& cancel, size_t budget) override {
-        if (location.is_remote()) return {{},{"unsupported","Remote provider unavailable"}};
-        const auto& path = location.local;
         Listing out;
-        auto add = [&](Entry e) {
+        out.error = enumerate(location,cancel,[&](Entry&& e) {
             if (dirs && !e.directory) return true;
             out.bytes += sizeof(Entry) * 2 + e.name.native().size() * sizeof(fs::path::value_type) * 2;
             if (out.bytes > budget) { out.error = {"resource_limit", "Directory exceeds the listing memory budget"}; return false; }
             e.id = out.entries.size() + 1;
             out.entries.push_back(std::move(e));
             return true;
-        };
+        },"browse");
+        if (!out.error && out.bytes > budget) out.error = {"resource_limit", "Directory exceeds the listing memory budget"};
+        if (out.error) { out.entries.clear(); out.bytes = 0; }
+        return out;
+    }
+    Error enumerate(const Location& location, const Cancel& cancel, const std::function<bool(Entry&&)>& visit, const char*) override {
+        if (location.is_remote()) return {"unsupported","Remote provider unavailable"};
+        const auto& path = location.local;
+        Error error;
 #ifdef _WIN32
         auto native = path.native();
         if (native.rfind(L"\\\\?\\", 0) != 0) {
@@ -130,18 +136,18 @@ public:
             else native = L"\\\\?\\" + native;
         }
         DWORD attr = GetFileAttributesW(native.c_str());
-        if (attr == INVALID_FILE_ATTRIBUTES) { out.error = error_of(GetLastError()); return out; }
-        if (!(attr & FILE_ATTRIBUTE_DIRECTORY)) { out.error = {"invalid_path", "Location is not a directory"}; return out; }
+        if (attr == INVALID_FILE_ATTRIBUTES) return error_of(GetLastError());
+        if (!(attr & FILE_ATTRIBUTE_DIRECTORY)) return {"invalid_path", "Location is not a directory"};
         if (native.back() != L'\\') native += L'\\';
         WIN32_FIND_DATAW data{};
         HANDLE h = FindFirstFileExW((native + L"*").c_str(), FindExInfoBasic, &data, FindExSearchNameMatch, nullptr, FIND_FIRST_EX_LARGE_FETCH);
         if (h == INVALID_HANDLE_VALUE) {
             DWORD err = GetLastError();
-            if (err != ERROR_FILE_NOT_FOUND) out.error = error_of(err);
-            return out;
+            return err == ERROR_FILE_NOT_FOUND ? Error{} : error_of(err);
         }
+        bool stopped = false;
         do {
-            if (cancel->load()) { out.error = {"cancelled", "Cancelled"}; break; }
+            if (cancel && cancel->load()) { error = {"cancelled", "Cancelled"}; break; }
             if (!wcscmp(data.cFileName,L".") || !wcscmp(data.cFileName,L"..")) continue;
             Entry e; e.name = data.cFileName;
             e.directory = (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
@@ -153,17 +159,17 @@ public:
             if (!e.directory) e.size = (uint64_t(data.nFileSizeHigh) << 32) | data.nFileSizeLow;
             uint64_t ticks = (uint64_t(data.ftLastWriteTime.dwHighDateTime) << 32) | data.ftLastWriteTime.dwLowDateTime;
             e.modified = static_cast<int64_t>(ticks / 10000000) - 11644473600LL;
-            if (!add(std::move(e))) break;
+            if (!visit(std::move(e))) { stopped = true; break; }
         } while (FindNextFileW(h, &data));
         DWORD err = GetLastError();
         FindClose(h);
-        if (!out.error && err != ERROR_NO_MORE_FILES) out.error = error_of(err);
+        if (!error && !stopped && err != ERROR_NO_MORE_FILES) error = error_of(err);
 #else
         std::error_code ec;
         fs::directory_iterator it(path, ec), end;
-        if (ec) { out.error = error_of(ec.value()); return out; }
+        if (ec) return error_of(ec.value());
         while (it != end) {
-            if (cancel->load()) { out.error = {"cancelled", "Cancelled"}; break; }
+            if (cancel && cancel->load()) { error = {"cancelled", "Cancelled"}; break; }
             Entry e; e.name = it->path().filename();
             e.hidden = !e.name.native().empty() && e.name.native()[0] == '.';
             e.link = it->is_symlink(ec); ec.clear();
@@ -172,14 +178,19 @@ public:
             auto t = it->last_write_time(ec);
             if (!ec) e.modified = std::chrono::duration_cast<std::chrono::seconds>(t - fs::file_time_type::clock::now() + std::chrono::system_clock::now().time_since_epoch()).count();
             ec.clear();
-            if (!add(std::move(e))) break;
+            if (!visit(std::move(e))) break;
             it.increment(ec);
-            if (ec) { out.error = error_of(ec.value()); break; }
+            if (ec) { error = error_of(ec.value()); break; }
         }
 #endif
-        if (out.error) { out.entries.clear(); out.bytes = 0; }
-        return out;
+        return error;
     }
 };
+Error Provider::enumerate(const Location& location, const Cancel& cancel, const std::function<bool(Entry&&)>& visit, const char*) {
+    auto listing = list(location,false,cancel,256*1024*1024);
+    if (listing.error) return listing.error;
+    for (auto& e : listing.entries) if (!visit(std::move(e))) break;
+    return {};
+}
 std::shared_ptr<Provider> local_provider() { return std::make_shared<Local>(); }
 }

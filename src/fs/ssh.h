@@ -18,5 +18,7 @@ bool rename_location(const Location& from,const Location& to,const Cancel&);
 void delete_location(const Location&,bool trash,const Cancel&,const std::function<void()>& removed = {});
 // Rename when possible; otherwise copy, then delete the source only after the copy completes.
 void move_location(const Location& source,const Location& destination,const Cancel&,const Progress& = {});
+// Streams a regular file looking for needle (already ASCII-lowercased), ASCII case-insensitively.
+bool file_contains(const Location&,const std::string& needle,const Cancel&,const char* lane = "search-content");
 fs::path stage_view(const Location&,const Cancel&,const Progress& = {});
 }

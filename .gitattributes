@@ -8,3 +8,4 @@
 *.png binary
 # Preserve the upstream license verbatim, including its heading's trailing space.
 third_party/nlohmann/LICENSE.MIT -whitespace
+*.ico binary

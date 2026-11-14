@@ -284,7 +284,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int show) {
             else file = ac::Location(arg);
         }
         LocalFree(argv);
-        WNDCLASSW wc{}; wc.lpfnWndProc = window_proc; wc.hInstance = instance; wc.lpszClassName = L"aiview-window"; wc.hCursor = LoadCursorW(nullptr,IDC_ARROW); wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)); RegisterClassW(&wc);
+        WNDCLASSW wc{}; wc.lpfnWndProc = window_proc; wc.hInstance = instance; wc.lpszClassName = L"aiview-window"; wc.hIcon = LoadIconW(instance,MAKEINTRESOURCEW(100)); wc.hCursor = LoadCursorW(nullptr,IDC_ARROW); wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)); RegisterClassW(&wc);
         app->window = CreateWindowW(wc.lpszClassName,L"aiview",WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,1100,740,nullptr,nullptr,instance,nullptr);
         if (!app->window) throw std::runtime_error("Cannot create viewer window");
         app->surface = CreateWindowW(L"STATIC",nullptr,WS_CHILD|WS_VISIBLE|WS_CLIPCHILDREN|SS_BLACKRECT,0,0,1084,701,app->window,nullptr,instance,nullptr);

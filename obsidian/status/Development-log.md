@@ -1,5 +1,9 @@
 # Development log
 
+## 2026-11-14: search lanes and icon
+
+Added streaming enumeration to providers and a search engine with probing fast lanes, a slow lane and a content lane (design and numbers in docs/Search.md). Core search tabs publish results progressively with a size-proportional interval. During visual verification a global SendKeys call typed into another application because aicmd was not foreground; GUI checks now only post messages to aicmd's own window handles. Generated an icon with a reproducible script.
+
 ## 2026-11-14: release packaging
 
 Bumped to 0.2.0. Generated version header feeds both C++ and RC VERSIONINFO. Added Help menu/F1, optional-dependency fallbacks, and package.ps1. The package script's version check caught aiview-tool.exe missing its resource, and PowerShell 5.1 treating VsDevCmd stderr as fatal; both fixed. The packaged executable passes the native smoke from its staged folder.

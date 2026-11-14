@@ -25,6 +25,8 @@
 | Shift+F6 | Rename the cursor entry in place; the dialog preselects the name without its extension |
 | F7 | Create a folder in the current directory and place the cursor on it |
 | F8 / Delete | Move marked entries or cursor entry to the Recycle Bin (local fixed drives) |
+| Alt+F7 | Search below a folder; results stream into a new tab, Enter goes to the file ([details](Search.md)) |
+| F1 | Keyboard shortcuts |
 | Shift+F8 / Shift+Delete | Permanently delete; remote (SSH) deletes are always permanent and say so |
 | Escape during transfer | Cancel the displayed transfer (path editing takes priority) |
 | Shift+Escape during transfer | Cancel all transfers queued/running in this window |

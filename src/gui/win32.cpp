@@ -1,4 +1,5 @@
 #include "aicmd_version.h"
+#include "core/search.h"
 #include "core/core.h"
 #include "host/state.h"
 #include "fs/ssh.h"
@@ -17,7 +18,7 @@
 using namespace ac;
 namespace {
 constexpr UINT TIMER = 1;
-constexpr int MENU_BASE = 1000, HELP_KEYS = 1900, HELP_ABOUT = 1901;
+constexpr int MENU_BASE = 1000, HELP_KEYS = 1900, HELP_ABOUT = 1901, MENU_SEARCH = 1902;
 struct Pane {
     HWND tabs{}, path{}, pathLabel{}, list{}, summary{};
     Id tab = 0;
@@ -68,6 +69,7 @@ struct App {
     int smokeStage = 0, smokeTicks = 0;
     std::wstring smokeInput;
     bool mediaHintShown = false;
+    std::wstring searchMask = L"*", searchText;
     fs::path smokeFixture;
     // Input dialog state.
     std::wstring inputCaption, inputLabel, inputText;
@@ -214,10 +216,53 @@ bool confirm(const std::wstring& text,const wchar_t* caption,bool warning = fals
     if (before) SetFocus(before);
     return ok;
 }
+INT_PTR CALLBACK search_dialog(HWND h,UINT message,WPARAM w,LPARAM) {
+    if (message == WM_INITDIALOG) {
+        SetDlgItemTextW(h,2021,app->inputText.c_str()); SetDlgItemTextW(h,2022,app->searchMask.c_str()); SetDlgItemTextW(h,2023,app->searchText.c_str());
+        for (int id : {2021,2022,2023}) SendDlgItemMessageW(h,id,EM_SETLIMITTEXT,id == 2021 ? 32767 : 1024,0);
+        SetFocus(GetDlgItem(h,2022)); SendDlgItemMessageW(h,2022,EM_SETSEL,0,-1);
+        return FALSE;
+    }
+    if (message == WM_COMMAND && (LOWORD(w) == IDOK || LOWORD(w) == IDCANCEL)) {
+        if (LOWORD(w) == IDOK) {
+            std::wstring values[3];
+            for (int i = 0; i < 3; ++i) { int n = GetWindowTextLengthW(GetDlgItem(h,2021+i)); values[i].resize(n+1); GetDlgItemTextW(h,2021+i,values[i].data(),n+1); values[i].resize(n); }
+            if (values[0].empty()) return TRUE;
+            app->inputText = values[0]; app->searchMask = values[1].empty() ? L"*" : values[1]; app->searchText = values[2];
+        }
+        EndDialog(h,LOWORD(w)); return TRUE;
+    }
+    return FALSE;
+}
+void start_search(int p) {
+    capture(p); const Tab* t = current(p); if (!t) return;
+    if (t->path.is_remote()) app->inputText = wide(t->path.u8string());
+    else app->inputText = t->path.native();
+    if (app->smokePath.empty()) {
+        HWND before = GetFocus();
+        auto result = DialogBoxParamW(GetModuleHandleW(nullptr),MAKEINTRESOURCEW(2020),app->window,search_dialog,0);
+        if (before) SetFocus(before);
+        if (result != IDOK) return;
+    } else app->searchMask = app->smokeInput;
+    Command c; c.action = Action::SearchStart; c.panel = p; c.tab = t->id;
+    c.path = Location(fs::path(app->inputText)); c.pattern = fs::path(app->searchMask).u8string(); c.text = fs::path(app->searchText).u8string();
+    run_command(c); activate(p);
+}
+std::wstring search_status(const Tab& t) {
+    auto s = t.search->stats();
+    std::wstring out = (s.finished ? (s.truncated ? L"Search stopped at result limit: " : L"Search finished: ") : L"Searching: ")+std::to_wstring(s.hits)+L" found, "
+        +std::to_wstring(s.folders)+L" folders, "+std::to_wstring(s.entries)+L" entries";
+    if (s.slowFolders) out += L", "+std::to_wstring(s.slowFolders)+L" large folders (slow lane)";
+    if (!s.finished) out += L", "+std::to_wstring(s.queued)+L" queued";
+    if (s.contentQueued || s.contentChecked) out += L", "+std::to_wstring(s.contentChecked)+L" content-checked";
+    if (s.unreadable) out += L", "+std::to_wstring(s.unreadable)+L" unreadable";
+    out += s.finished ? L"   |   Enter goes to file, Ctrl+R reruns" : L"   |   Esc stops";
+    return out;
+}
 void show_help(bool about) {
     std::wstring text = about
         ? L"aicmd " AICMD_VERSION_WSTRING L"\n\nCompact, keyboard-first two-panel file commander.\nLocal and SSH/SFTP browsing, viewing, copying, moving and deleting.\n\nSession: %LOCALAPPDATA%\\aicmd\\session.json"
-        : L"Tab\tswitch panel\nEnter / Backspace\topen / parent\nInsert, Shift+Space\tmark\nNum+ / Num- / Num*\tselect / unselect / invert\nCtrl+A\tmark all\n\nF3 / F4\tview / edit (jptxt)\nF5\tcopy to other panel\nF6\tmove to other panel\nShift+F6\trename\nF7\tnew folder\nF8 / Delete\tRecycle Bin\nShift+F8 / Shift+Delete\tdelete permanently\nEscape\tcancel current job (Shift: all)\n\nCtrl+T / Ctrl+W\tnew / close tab\nCtrl+Tab\tnext tab\nCtrl+L\tedit path (ssh://alias/path)\nCtrl+D\tbookmarks\nAlt+F1 / Alt+F2\tdrives and SSH hosts\nAlt+Left / Alt+Right\tback / forward\nCtrl+R / Ctrl+H\trefresh / hidden files\nSpace\tmedia viewer (aiview)\n\nNothing is ever overwritten.";
+        : L"Tab\tswitch panel\nEnter / Backspace\topen / parent\nInsert, Shift+Space\tmark\nNum+ / Num- / Num*\tselect / unselect / invert\nCtrl+A\tmark all\n\nF3 / F4\tview / edit (jptxt)\nF5\tcopy to other panel\nF6\tmove to other panel\nShift+F6\trename\nF7\tnew folder\nF8 / Delete\tRecycle Bin\nShift+F8 / Shift+Delete\tdelete permanently\nEscape\tcancel current job (Shift: all)\nAlt+F7\tsearch (results in a new tab)\n\nCtrl+T / Ctrl+W\tnew / close tab\nCtrl+Tab\tnext tab\nCtrl+L\tedit path (ssh://alias/path)\nCtrl+D\tbookmarks\nAlt+F1 / Alt+F2\tdrives and SSH hosts\nAlt+Left / Alt+Right\tback / forward\nCtrl+R / Ctrl+H\trefresh / hidden files\nSpace\tmedia viewer (aiview)\n\nNothing is ever overwritten.";
     HWND before = GetFocus();
     MessageBoxW(app->window,text.c_str(),about ? L"About aicmd" : L"Keyboard shortcuts - F1",MB_OK|MB_ICONINFORMATION);
     if (before) SetFocus(before);
@@ -437,10 +482,22 @@ void action(Action a, int p = -1, bool flag = false) {
 void open_item(int p) {
     capture(p); const auto& v = app->panes[p];
     int row = ListView_GetNextItem(v.list,-1,LVNI_FOCUSED);
-    if (row == 0) { action(Action::Parent,p); return; }
+    const Tab* tab = current(p);
+    if (row == 0) {
+        // In search results, [..] returns to the folder that was searched.
+        if (tab && tab->search) { Command c; c.action = Action::Navigate; c.panel = p; c.tab = tab->id; c.path = tab->path; run_command(c); }
+        else action(Action::Parent,p);
+        return;
+    }
     if (!v.snapshot || row < 1 || static_cast<size_t>(row-1) >= v.snapshot->entries.size()) return;
     const auto& e = v.snapshot->entries[row-1];
     Command c; c.panel = p; c.tab = v.tab; c.snapshot = v.snapshot->id;
+    if (tab && tab->search && !e.directory) {
+        // Go to the file: open its folder with the cursor on it (Total Commander "Go to file").
+        auto file = v.snapshot->path/e.name;
+        c.action = Action::Navigate; c.path = file.parent_path(); c.focus = file.filename();
+        run_command(c); return;
+    }
     c.action = e.directory ? Action::Navigate : v.snapshot->path.is_remote() ? Action::FileView : Action::FileEdit;
     c.path = e.directory ? v.snapshot->path / e.name : e.name;
     run_command(c);
@@ -531,6 +588,7 @@ void menu() {
     add(file,Action::FileMove,L"&Move to other panel\tF6");
     add(file,Action::FileRename,L"&Rename\tShift+F6");
     add(file,Action::DirCreate,L"New &folder\tF7");
+    AppendMenuW(file,MF_STRING,MENU_SEARCH,L"&Search...\tAlt+F7");
     add(file,Action::FileDelete,L"&Delete to Recycle Bin\tF8");
     AppendMenuW(file,MF_SEPARATOR,0,nullptr); add(file,Action::SessionSave,L"&Save session"); add(file,Action::AppQuit,L"E&xit");
     HMENU view = CreatePopupMenu(); add(view,Action::Refresh,L"&Refresh / Retry\tCtrl+R"); add(view,Action::FilterSet,L"Show &hidden files\tCtrl+H");
@@ -571,7 +629,7 @@ void render() {
         const auto& panel = app->core.state().panels[p];
         std::vector<Id> ids; std::vector<std::wstring> labels;
         for (const auto& tab : panel.tabs) {
-            ids.push_back(tab.id); auto label = shown(tab.path.filename().empty() ? tab.path : Location(tab.path.filename()));
+            ids.push_back(tab.id); auto label = tab.search ? L"Search: "+wide(tab.search->query().mask)+(tab.search->stats().finished ? L"" : L" ...") : shown(tab.path.filename().empty() ? tab.path : Location(tab.path.filename()));
             if (tab.loading) label += L" ..."; if (tab.error) label += L" !"; labels.push_back(label);
         }
         if (ids != v.tabIds || labels != v.tabLabels) {
@@ -588,6 +646,7 @@ void render() {
             auto native = path.native(); if (text(v.path) != native) SetWindowTextW(v.path,native.c_str());
         }
         auto bar = L" " + shown(t->loading ? t->requested : t->path);
+        if (t->search) { bar = L" Search " + wide(t->search->query().mask) + (t->search->query().text.empty() ? L"" : L" containing \"" + wide(t->search->query().text) + L"\"") + L" in " + shown(t->path); }
         if (t->loading) bar += L"  [loading]";
         bool active = p == app->core.state().activePanel;
         if (text(v.pathLabel) != bar) SetWindowTextW(v.pathLabel,bar.c_str());
@@ -630,6 +689,7 @@ void render() {
     }
     const auto* t = current(app->core.state().activePanel);
     std::wstring status = app->notice;
+    if (status.empty() && t && t->search) status = search_status(*t);
     if (status.empty() && t && t->error) status = wide(t->error.message)+L"   |   Ctrl+R Retry";
     if (status.empty()) status = L"F1 Help   F3 View   F4 Edit   F5 Copy   F6 Move   Shift+F6 Rename   F7 MkDir   F8 Delete   Insert Mark   Num+/- Select   Ctrl+D Bookmarks   Alt+F1/F2 Drives/SSH";
     if (text(app->status) != status) SetWindowTextW(app->status,status.c_str());
@@ -637,7 +697,8 @@ void render() {
     app->syncing = false; app->seen = app->core.state().revision; app->renderedNotice = app->notice;
 }
 std::wstring cell(const Entry& e,int column) {
-    if (column == 0) return e.directory ? L"["+shown(e.name)+L"]" : shown(e.name.has_extension() ? e.name.stem() : e.name);
+    // Search results carry a relative path; keep its folder part visible.
+    if (column == 0) return e.directory ? L"["+shown(e.name)+L"]" : shown(e.name.has_extension() ? e.name.parent_path()/e.name.stem() : e.name);
     if (column == 1) { auto ext = shown(e.name.extension()); return e.directory || ext.empty() ? L"" : ext.substr(1); }
     if (column == 2) {
         if (e.directory) return L"<DIR>";
@@ -772,6 +833,7 @@ bool key(MSG& msg,int testModifiers = -1) {
     if (msg.wParam == VK_F3) { action(Action::FileView,p); return true; }
     if (msg.wParam == VK_F5) { action(Action::FileCopy,p); return true; }
     if (msg.wParam == VK_F6 && !alt) { action(shift ? Action::FileRename : Action::FileMove,p); return true; }
+    if (msg.wParam == VK_F7 && alt) { start_search(p); return true; }
     if (msg.wParam == VK_F7 && !alt) { action(Action::DirCreate,p); return true; }
     if ((msg.wParam == VK_F8 || (msg.wParam == VK_DELETE && focus == v.list)) && !alt && !ctrl) { action(Action::FileDelete,p,shift); return true; }
     if (msg.wParam == VK_ESCAPE) {
@@ -807,7 +869,7 @@ void focus_entry(int p,const char* name) {
 void smoke() {
     if (app->smokePath.empty() || app->locationMenuOpen) return;
     if (++app->smokeTicks > 600) { app->smokeFailed = true; PostMessageW(app->window,WM_CLOSE,0,0); return; }
-    if (app->core.busy()) return;
+    if (app->core.busy() || app->core.searching()) return;
     auto check = [](bool okay) { static int index = 0; ++index; if (!okay) { app->smokeFailed = true; std::ofstream log(app->smokePath.string()+".failures",std::ios::app); log << "stage " << app->smokeStage << " check " << index << '\n'; } };
     auto press = [](WPARAM code,int mods = 0) { MSG event{}; event.message = WM_KEYDOWN; event.wParam = code; key(event,mods); };
     if (app->smokeStage == 0) {
@@ -949,6 +1011,16 @@ void smoke() {
         check(!fs::exists(app->smokeFixture/"src"/"b.txt"));
         bool listed = false; for (const auto& e : current(0)->snapshot->entries) listed |= e.name == "b.txt";
         check(!listed && app->transfers.empty());
+        // Alt+F7 in the destination panel: one match, in a new result tab.
+        focus_entry(1,"renamed.txt"); app->smokeInput = L"*.txt"; press(VK_F7,4);
+    } else if (app->smokeStage == 15) {
+        const Tab* t = current(1);
+        check(t && t->search && app->core.state().panels[1].tabs.size() == 2);
+        check(t && t->snapshot && t->snapshot->entries.size() == 1 && t->snapshot->entries[0].name == "renamed.txt");
+        render(); SetFocus(app->panes[1].list); ListView_SetItemState(app->panes[1].list,1,LVIS_FOCUSED,LVIS_FOCUSED); press(VK_RETURN);
+    } else if (app->smokeStage == 16) {
+        const Tab* t = current(1);
+        check(t && !t->search && t->path == Location(app->smokeFixture/"dst") && t->focus == "renamed.txt");
         std::error_code ec; fs::remove_all(app->smokeFixture,ec);
         PostMessageW(app->window,WM_CLOSE,0,0);
     }
@@ -962,6 +1034,7 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
     case WM_COMMAND: {
         int id = LOWORD(w);
         if (id == HELP_KEYS || id == HELP_ABOUT) { show_help(id == HELP_ABOUT); return 0; }
+        if (id == MENU_SEARCH) { start_search(app->core.state().activePanel); return 0; }
         if (id >= MENU_BASE && id < MENU_BASE+static_cast<int>(Action::AppQuit)+1) { action(static_cast<Action>(id-MENU_BASE)); return 0; }
         for (int p = 0; p < 2; ++p) {
             if (id == 100+p*100 && HIWORD(w) == STN_CLICKED) { activate(p); edit_path(p); }
@@ -1007,7 +1080,7 @@ LRESULT CALLBACK window_proc(HWND hwnd,UINT message,WPARAM w,LPARAM l) {
                 if (app->transfersCancelled || !app->transferError.empty()) app->notice += L" Entries already processed stay processed; remote staging files may need cleanup after disconnect.";
             }
         }
-        if (app->seen != app->core.state().revision || app->notice != app->renderedNotice) render();
+        if (app->seen != app->core.state().revision || app->notice != app->renderedNotice || app->core.searching()) render();
         if (app->dirty && !app->core.busy() && GetTickCount64()-app->lastSave > 3000) save();
         smoke(); return 0;
     case WM_SIZE: if (app->status) { layout(); app->dirty = true; } return 0;
@@ -1097,14 +1170,14 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int show) {
         }
         INITCOMMONCONTROLSEX icc{sizeof(icc),ICC_LISTVIEW_CLASSES|ICC_TAB_CLASSES}; InitCommonControlsEx(&icc);
         WNDCLASSEXW wc{}; wc.cbSize = sizeof(wc); wc.hInstance = instance; wc.lpfnWndProc = window_proc; wc.lpszClassName = L"aicmd-window";
-        wc.hCursor = LoadCursorW(nullptr,IDC_ARROW); wc.hIcon = LoadIconW(nullptr,IDI_APPLICATION); wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW+1);
+        wc.hCursor = LoadCursorW(nullptr,IDC_ARROW); wc.hIcon = LoadIconW(instance,MAKEINTRESOURCEW(100)); wc.hIconSm = static_cast<HICON>(LoadImageW(instance,MAKEINTRESOURCEW(100),IMAGE_ICON,GetSystemMetrics(SM_CXSMICON),GetSystemMetrics(SM_CYSMICON),0)); wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW+1);
         RegisterClassExW(&wc);
         HWND hwnd = CreateWindowExW(0,wc.lpszClassName,L"aicmd — native file browser",WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,CW_USEDEFAULT,CW_USEDEFAULT,app->width,app->height,nullptr,nullptr,instance,nullptr);
         if (!hwnd) throw std::runtime_error("Cannot create application window");
         ShowWindow(hwnd,show); render(); SetFocus(app->panes[app->core.state().activePanel].list);
         MSG msg{};
         while (GetMessageW(&msg,nullptr,0,0) > 0) { if (!key(msg)) { TranslateMessage(&msg); DispatchMessageW(&msg); } }
-        if (!app->smokePath.empty()) { if (app->smokeStage < 15) app->smokeFailed = true; std::ofstream f(app->smokePath); f << (app->smokeFailed ? "FAIL" : "PASS") << " native GUI: compact full-width lists, tabs, parent, keyboard/mouse cursor and mark routes, full-row clicks, double-click navigation, persistence, F7/Shift+F6/F6/Shift+Delete file operations (stages " << app->smokeStage << ")\n"; }
+        if (!app->smokePath.empty()) { if (app->smokeStage < 17) app->smokeFailed = true; std::ofstream f(app->smokePath); f << (app->smokeFailed ? "FAIL" : "PASS") << " native GUI: compact full-width lists, tabs, parent, keyboard/mouse cursor and mark routes, full-row clicks, double-click navigation, persistence, F7/Shift+F6/F6/Shift+Delete file operations, Alt+F7 search and go-to-file (stages " << app->smokeStage << ")\n"; }
         int result = app->smokeFailed ? 1 : 0;
         CloseHandle(app->stateLock); DeleteObject(app->font); DeleteObject(app->activePath); DeleteObject(app->inactivePath); ImageList_Destroy(app->icons); app.reset(); return result;
     } catch (const std::exception& e) { MessageBoxW(nullptr,wide(e.what()).c_str(),L"aicmd",MB_ICONERROR); return 1; }

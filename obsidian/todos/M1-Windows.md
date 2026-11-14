@@ -1,13 +1,19 @@
 # M1: compact Windows directory browsing
 
+## Search
+
+- [x] Alt+F7 lanes, streaming result tab, go-to-file, CLI search, local + SFTP (2026-11-14).
+- [ ] Tune lane count/caps on cold cache, SMB and WAN; date/size filters; search inside archives; regex.
+
 ## Release readiness (v0.2.0)
+
+- [x] Application icon.
 
 - [x] Version resource, F1 help/About, packaged zip with smoke test (`scripts/package.ps1`).
 - [x] Optional jptxt and libmpv with graceful fallbacks.
 - [ ] Choose project LICENSE (blocks public release); decide jptxt/libmpv bundling.
 - [ ] Interactive check of no-jptxt / no-libmpv fallbacks on a clean machine.
 - [ ] Code signing, installer or winget manifest; GitHub release upload (requires explicit go-ahead).
-- [ ] Application icon.
 
 - [x] Consistent full-row mouse cursor after keyboard navigation; plain clicks preserve marks, Ctrl/Shift clicks mark explicitly; native regression coverage (2026-09-27).
 

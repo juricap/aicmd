@@ -27,6 +27,8 @@ BEGIN
     END
 END
 1 RT_MANIFEST "aicmd.manifest"
+// First icon resource: used by Explorer, the taskbar and the window class.
+100 ICON "aicmd.ico"
 
 2001 DIALOGEX 0, 0, 250, 90
 STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
@@ -49,4 +51,19 @@ BEGIN
     EDITTEXT 2012, 8, 23, 244, 14, ES_AUTOHSCROLL
     DEFPUSHBUTTON "OK", IDOK, 146, 48, 50, 14
     PUSHBUTTON "Cancel", IDCANCEL, 202, 48, 50, 14
+END
+
+2020 DIALOGEX 0, 0, 300, 112
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Search - Alt+F7"
+FONT 9, "Segoe UI"
+BEGIN
+    LTEXT "Search in (folder or ssh://alias/path):", -1, 8, 6, 284, 10
+    EDITTEXT 2021, 8, 17, 284, 14, ES_AUTOHSCROLL
+    LTEXT "File name mask (* and ?; separate masks with semicolons):", -1, 8, 35, 284, 10
+    EDITTEXT 2022, 8, 46, 284, 14, ES_AUTOHSCROLL
+    LTEXT "Containing text (optional, case-insensitive):", -1, 8, 64, 284, 10
+    EDITTEXT 2023, 8, 75, 284, 14, ES_AUTOHSCROLL
+    DEFPUSHBUTTON "Search", IDOK, 186, 94, 50, 14
+    PUSHBUTTON "Cancel", IDCANCEL, 242, 94, 50, 14
 END
