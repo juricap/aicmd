@@ -1,5 +1,11 @@
 # M1: compact Windows directory browsing
 
+## Archives
+
+- [x] Read-only ZIP/ZIP64/TAR/TGZ browsing, F3/F4 staging, F5 extraction, local + SSH (2026-11-15).
+- [ ] Packing/writing (Alt+F5, F5 into archive, delete inside); 64-bit WCX plugin host; 7z/RAR/XZ/BZip2 via plugins or bundled tar.exe.
+- [ ] Faster inflate; archives inside archives; search and media playback inside archives.
+
 ## Search
 
 - [x] Alt+F7 lanes, streaming result tab, go-to-file, CLI search, local + SFTP (2026-11-14).

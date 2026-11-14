@@ -35,7 +35,7 @@ struct Entry {
 };
 enum class Sort { Name, Extension, Size, Modified };
 struct Options { Sort sort = Sort::Name; bool descending = false, hidden = false; };
-struct Listing { std::vector<Entry> entries; Error error; size_t bytes = 0; };
+struct Listing { std::vector<Entry> entries; Error error; size_t bytes = 0; bool readOnly = false; /* inside an archive */ };
 class Provider {
 public:
     virtual ~Provider() = default;
@@ -54,7 +54,7 @@ void sort_entries(std::vector<Entry>&, const Options&);
 bool matches_pattern(const fs::path& name, const std::string& pattern);
 
 class Search;
-struct Snapshot { Id id = 0; Location path; std::vector<Entry> entries; size_t bytes = 0; };
+struct Snapshot { Id id = 0; Location path; std::vector<Entry> entries; size_t bytes = 0; bool readOnly = false; };
 enum class Load { Unloaded, Loading, Loaded, Failed };
 struct TreeNode {
     Id id = 0, parent = 0, generation = 0;

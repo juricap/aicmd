@@ -1,6 +1,7 @@
 #include "ssh.h"
 #include "ssh_process.h"
 #include "read_source.h"
+#include "archive.h"
 #include <algorithm>
 #include <cstring>
 #include <fstream>
@@ -180,11 +181,33 @@ struct Access {
     ~Access() { deadline.reset(); if (std::uncaught_exceptions() > exceptions) connection->sftp.reset(); }
     Sftp* operator->() { return connection->sftp.get(); }
 };
+ArchiveStat stat_location(const Location& l,const Cancel& cancel) {
+    ArchiveStat s;
+    if (l.is_remote()) {
+        Access access(l.host,"browse",cancel);
+        if (!access->exists(l.remote)) return s;
+        auto a = access->stat(l.remote,true); s.exists = true; s.regular = a.regular(); s.size = a.size; s.modified = a.modified; return s;
+    }
+    std::error_code ec; auto st = fs::status(l.local,ec);
+    if (ec || !fs::exists(st)) return s;
+    s.exists = true; s.regular = fs::is_regular_file(st);
+    if (s.regular) { s.size = fs::file_size(l.local,ec); s.modified = static_cast<int64_t>(fs::last_write_time(l.local,ec).time_since_epoch().count()); }
+    return s;
+}
+// A location strictly inside an archive (or the archive root when allowRoot), with the container's stat.
+std::optional<std::pair<ArchivePath,ArchiveStat>> in_archive(const Location& l,const Cancel& cancel,bool allowRoot) {
+    ArchiveStat container;
+    auto found = locate_archive(l,[&](const Location& p){ container = stat_location(p,cancel); return container; });
+    if (!found || (!allowRoot && found->inner.empty())) return std::nullopt;
+    return std::make_pair(*found,container);
+}
 class Filesystems final : public Provider {
     std::shared_ptr<Provider> local = local_provider();
 public:
     std::vector<Location> roots() override { return local->roots(); }
     Listing list(const Location& path,bool dirs,const Cancel& cancel,size_t budget) override {
+        try { if (auto a = in_archive(path,cancel,true)) return archive_list(a->first,a->second,dirs,cancel,budget); }
+        catch (const std::exception& e) { return {{},{cancel && cancel->load() ? "cancelled" : "archive",e.what()}}; }
         if (!path.is_remote()) return local->list(path,dirs,cancel,budget);
         try { Access access(path.host,"browse",cancel); return access->list(path,dirs,cancel,budget); }
         catch (const std::exception& e) { return {{},{cancel && cancel->load() ? "cancelled" : "ssh",e.what()}}; }
@@ -242,6 +265,19 @@ std::unique_ptr<ReadSource> open_read(const Location& file,const Cancel& cancel)
 }
 static void local_name(const fs::path& name);
 fs::path stage_view(const Location& source,const Cancel& cancel,const Progress& progress) {
+    if (auto archived = in_archive(source,cancel,false)) {
+        auto entry = archive_entry(archived->first,archived->second,cancel);
+        if (entry.directory || entry.link) throw std::runtime_error("Viewer requires a regular file");
+        if (entry.size.value_or(0) > 1024ull*1024*1024) throw std::runtime_error("Archive viewer staging is limited to 1 GiB; use F5 to extract this file");
+        static std::atomic<uint64_t> archiveSequence{0};
+        auto folder = fs::temp_directory_path()/"aicmd-view"/("a"+std::to_string(SshPipe::now())+"-"+std::to_string(++archiveSequence));
+        fs::create_directories(folder);
+        auto name = source.filename(); try { local_name(name); } catch (...) { name = "archive-view"; }
+        auto file = folder/name;
+        try { copy_file(source,file,cancel,progress); } catch (...) { std::error_code ec; fs::remove_all(folder,ec); throw; }
+        fs::permissions(file,fs::perms::owner_write|fs::perms::group_write|fs::perms::others_write,fs::perm_options::remove);
+        return file;
+    }
     if (!source.is_remote()) return source.local;
     struct Cached { Attr remote; fs::path file; fs::file_time_type modified; };
     static std::mutex cacheMutex; static std::map<Location,Cached> cache;
@@ -288,7 +324,12 @@ void copy_location(const Location& source,const Location& destination,const Canc
     std::function<void(const Location&,const Location&,int)> visit = [&](const Location& from,const Location& to,int depth) {
         if ((cancel && cancel->load()) || depth > 64 || ++entries > 1000000) throw std::runtime_error("Copy cancelled or recursive copy limit reached");
         bool directory = false;
-        if (from.is_remote()) { Access access(from.host,"browse",cancel); auto a = access->stat(from.remote); if (a.link()) throw std::runtime_error("Recursive copy does not follow symlinks"); directory = a.directory(); }
+        if (auto archived = in_archive(from,cancel,false)) {
+            auto entry = archive_entry(archived->first,archived->second,cancel);
+            if (entry.link) throw std::runtime_error("Copy does not extract links from archives");
+            directory = entry.directory;
+        }
+        else if (from.is_remote()) { Access access(from.host,"browse",cancel); auto a = access->stat(from.remote); if (a.link()) throw std::runtime_error("Recursive copy does not follow symlinks"); directory = a.directory(); }
         else { auto a = fs::symlink_status(from.local); if (fs::is_symlink(a)) throw std::runtime_error("Recursive copy does not follow symlinks"); directory = fs::is_directory(a); }
         if (!directory) { uint64_t bytes = 0; copy_file(from,to,cancel,[&](uint64_t n){bytes = n; if (progress) progress(completed+n);}); completed += bytes; return; }
         if (to.is_remote()) { Access access(to.host,"write",cancel); access->mkdir(to.remote); }
@@ -312,6 +353,44 @@ void copy_location(const Location& source,const Location& destination,const Canc
 }
 void copy_file(const Location& source,const Location& destination,const Cancel& cancel,const Progress& progress) {
     if (source == destination) throw std::runtime_error("Source and destination are identical");
+    if (auto archived = in_archive(source,cancel,false); archived && !destination.is_remote()) {
+        // Local destination: extract straight into an exclusive staging file beside it, then publish without replacing.
+        if (fs::exists(fs::symlink_status(destination.local))) throw std::runtime_error("Destination exists; no overwrite performed");
+        static std::atomic<uint64_t> directSequence{0};
+        auto temp = destination.local.parent_path()/fs::u8path(".aicmd-part-"+std::to_string(SshPipe::now())+"-x"+std::to_string(++directSequence));
+#ifdef _WIN32
+        HANDLE output = CreateFileW(temp.c_str(),GENERIC_WRITE,0,nullptr,CREATE_NEW,FILE_ATTRIBUTE_NORMAL,nullptr);
+        if (output == INVALID_HANDLE_VALUE) throw std::runtime_error("Cannot create destination staging file");
+        auto put = [&](const char* p,size_t n){ while (n) { DWORD w = 0; if (!WriteFile(output,p,static_cast<DWORD>(std::min<size_t>(n,1u<<30)),&w,nullptr) || !w) throw std::runtime_error("Destination write failed"); p += w; n -= w; } };
+        auto close = [&]{ if (output != INVALID_HANDLE_VALUE) { CloseHandle(output); output = INVALID_HANDLE_VALUE; } };
+#else
+        int output = ::open(temp.c_str(),O_WRONLY|O_CREAT|O_EXCL,0644);
+        if (output < 0) throw std::runtime_error("Cannot create destination staging file");
+        auto put = [&](const char* p,size_t n){ while (n) { auto w = ::write(output,p,n); if (w <= 0) throw std::runtime_error("Destination write failed"); p += w; n -= static_cast<size_t>(w); } };
+        auto close = [&]{ if (output >= 0) { ::close(output); output = -1; } };
+#endif
+        try {
+            uint64_t done = 0;
+            archive_extract(archived->first,archived->second,cancel,[&](const char* p,size_t n){ put(p,n); done += n; if (progress) progress(done); });
+            close();
+            if (!rename_location(temp,destination,cancel)) throw std::runtime_error("Cannot publish extracted file");
+        } catch (...) { close(); std::error_code ec; fs::remove(temp,ec); throw; }
+        return;
+    }
+    if (auto archived = in_archive(source,cancel,false)) {
+        // Remote destination: extract to a private temporary file, then upload with the normal no-overwrite copy.
+        static std::atomic<uint64_t> extractSequence{0};
+        auto folder = fs::temp_directory_path()/"aicmd-extract"; fs::create_directories(folder);
+        auto temp = folder/(std::to_string(SshPipe::now())+"-"+std::to_string(++extractSequence));
+        try {
+            {
+                std::ofstream out(temp,std::ios::binary); if (!out) throw std::runtime_error("Cannot create extraction staging file");
+                archive_extract(archived->first,archived->second,cancel,[&](const char* p,size_t n){ out.write(p,static_cast<std::streamsize>(n)); if (!out) throw std::runtime_error("Extraction write failed"); });
+            }
+            copy_file(temp,destination,cancel,progress);
+        } catch (...) { std::error_code ec; fs::remove(temp,ec); throw; }
+        std::error_code ec; fs::remove(temp,ec); return;
+    }
     bool exists = false;
     if (destination.is_remote()) { Access access(destination.host,"write",cancel); exists = access->exists(destination.remote); }
     else exists = fs::exists(fs::symlink_status(destination.local));

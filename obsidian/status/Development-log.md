@@ -1,5 +1,9 @@
 # Development log
 
+## 2026-11-15: archives as folders
+
+Researched TC behaviour (Enter/Ctrl+PgDn, `..` leaves, F3 temp view, F5 unpack, WCX plugins). Chose path-transparent archive locations resolved inside the filesystem provider, so tabs, history, sessions and Ctrl+L need no new location type. Wrote inflate/gzip/ZIP/TAR readers over the existing ReadSource (local or SFTP random access). First inflate version was 8× slower than bsdtar on 200 MB; a flat history buffer with memcpy for non-overlapping matches and direct extraction into the destination's staging file brought it to ~3×. GCC -Wextra caught aggregate initialisers and a misleading one-line loop.
+
 ## 2026-11-14: search lanes and icon
 
 Added streaming enumeration to providers and a search engine with probing fast lanes, a slow lane and a content lane (design and numbers in docs/Search.md). Core search tabs publish results progressively with a size-proportional interval. During visual verification a global SendKeys call typed into another application because aicmd was not foreground; GUI checks now only post messages to aicmd's own window handles. Generated an icon with a reproducible script.

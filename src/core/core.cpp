@@ -311,7 +311,7 @@ bool Core::poll() {
                 for (auto& panel : state_.panels) for (auto& other : panel.tabs)
                     if (used > 128 * 1024 * 1024 && &other != t && other.id != panel.active && other.snapshot) { used -= other.snapshot->bytes; other.snapshot.reset(); }
                 auto snap = std::make_shared<Snapshot>(); snap->id = next_++; snap->path = w.path;
-                snap->entries = std::move(d.listing.entries); snap->bytes = d.listing.bytes;
+                snap->entries = std::move(d.listing.entries); snap->bytes = d.listing.bytes; snap->readOnly = d.listing.readOnly;
                 bool same = t->path == w.path;
                 t->path = w.path;
                 if (!same) { t->selection.clear(); t->focus.clear(); t->anchor.clear(); }
@@ -488,16 +488,17 @@ Result Core::execute(const Command& c) {
         case Action::FileMove: case Action::FileRename: case Action::FileDelete: case Action::DirCreate: return queue_operation(c,*t);
         case Action::FileCopy: case Action::FileView: case Action::FileEdit: {
             if (!t->snapshot || c.snapshot != t->snapshot->id) return {{"stale_snapshot","File listing changed"}};
-            if (c.action == Action::FileEdit && t->path.is_remote()) return {{"unsupported","Remote edit/upload-on-save is not available. F3 stages a local view; F5 copies files."}};
+            if (c.action == Action::FileEdit && t->path.is_remote() && !t->snapshot->readOnly) return {{"unsupported","Remote edit/upload-on-save is not available. F3 stages a local view; F5 copies files."}};
             Work w; w.panel = c.panel; w.tab = t->id;
             w.kind = c.action == Action::FileCopy ? Work::Copy : Work::View;
             const auto* target = tab(1-c.panel); if (target) w.destination = target->path;
+            if (c.action == Action::FileCopy && target && target->snapshot && target->snapshot->readOnly) return {{"read_only","Cannot copy into an archive; archives are read-only"}};
             for (const auto& e : t->snapshot->entries) {
                 bool selected = c.action == Action::FileCopy && !t->selection.empty() ? t->selection.count(e.name) != 0 : Location(e.name) == c.path;
                 if (!selected) continue;
                 if (c.action != Action::FileCopy && e.directory) continue;
                 auto source = t->path/e.name;
-                if (!source.is_remote() && c.action != Action::FileCopy) { r.launchPath = source; r.viewOnly = c.action == Action::FileView; return r; }
+                if (!source.is_remote() && !t->snapshot->readOnly && c.action != Action::FileCopy) { r.launchPath = source; r.viewOnly = c.action == Action::FileView; return r; }
                 w.sources.push_back(source);
                 w.queuedBytes += sizeof(Location)+source.native().size()*sizeof(fs::path::value_type)+source.host.size()+source.remote.size()+128;
                 if (w.queuedBytes > 32*1024*1024) return {{"resource_limit","Copy selection exceeds 32 MiB queue budget"}};
@@ -524,7 +525,12 @@ Result Core::queue_operation(const Command& c, Tab& t) {
         w.name = c.pattern;
         try { validate_name(t.path,fs::u8path(w.name)); } catch (const std::exception& e) { return {{"invalid_argument",e.what()}}; }
     }
-    if (w.op == JobKind::Move) { const auto* target = tab(1-c.panel); if (!target) return {{"not_found","No destination panel"}}; w.destination = target->path; }
+    if (t.snapshot->readOnly) return {{"read_only","Archives are read-only: use F5 to extract"}};
+    if (w.op == JobKind::Move) {
+        const auto* target = tab(1-c.panel); if (!target) return {{"not_found","No destination panel"}};
+        if (target->snapshot && target->snapshot->readOnly) return {{"read_only","Cannot move into an archive; archives are read-only"}};
+        w.destination = target->path;
+    }
     if (w.op == JobKind::Move && w.destination == t.path) return {{"invalid_argument","Source and destination folders are the same; use rename"}};
     if (w.op == JobKind::Delete && t.path.is_remote() && w.trash) return {{"unsupported","Remote servers have no Recycle Bin; use permanent delete"}};
     if (w.op == JobKind::Mkdir) w.sources.push_back(t.path/fs::u8path(w.name));

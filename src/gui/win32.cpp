@@ -1,5 +1,6 @@
 #include "aicmd_version.h"
 #include "core/search.h"
+#include "fs/archive.h"
 #include "core/core.h"
 #include "host/state.h"
 #include "fs/ssh.h"
@@ -262,7 +263,7 @@ std::wstring search_status(const Tab& t) {
 void show_help(bool about) {
     std::wstring text = about
         ? L"aicmd " AICMD_VERSION_WSTRING L"\n\nCompact, keyboard-first two-panel file commander.\nLocal and SSH/SFTP browsing, viewing, copying, moving and deleting.\n\nSession: %LOCALAPPDATA%\\aicmd\\session.json"
-        : L"Tab\tswitch panel\nEnter / Backspace\topen / parent\nInsert, Shift+Space\tmark\nNum+ / Num- / Num*\tselect / unselect / invert\nCtrl+A\tmark all\n\nF3 / F4\tview / edit (jptxt)\nF5\tcopy to other panel\nF6\tmove to other panel\nShift+F6\trename\nF7\tnew folder\nF8 / Delete\tRecycle Bin\nShift+F8 / Shift+Delete\tdelete permanently\nEscape\tcancel current job (Shift: all)\nAlt+F7\tsearch (results in a new tab)\n\nCtrl+T / Ctrl+W\tnew / close tab\nCtrl+Tab\tnext tab\nCtrl+L\tedit path (ssh://alias/path)\nCtrl+D\tbookmarks\nAlt+F1 / Alt+F2\tdrives and SSH hosts\nAlt+Left / Alt+Right\tback / forward\nCtrl+R / Ctrl+H\trefresh / hidden files\nSpace\tmedia viewer (aiview)\n\nNothing is ever overwritten.";
+        : L"Tab\tswitch panel\nEnter / Backspace\topen / parent\nInsert, Shift+Space\tmark\nNum+ / Num- / Num*\tselect / unselect / invert\nCtrl+A\tmark all\n\nF3 / F4\tview / edit (jptxt)\nF5\tcopy to other panel\nF6\tmove to other panel\nShift+F6\trename\nF7\tnew folder\nF8 / Delete\tRecycle Bin\nShift+F8 / Shift+Delete\tdelete permanently\nEscape\tcancel current job (Shift: all)\nAlt+F7\tsearch (results in a new tab)\nEnter / Ctrl+PgDn\topen folder or archive (read-only)\nCtrl+PgUp\tparent\n\nCtrl+T / Ctrl+W\tnew / close tab\nCtrl+Tab\tnext tab\nCtrl+L\tedit path (ssh://alias/path)\nCtrl+D\tbookmarks\nAlt+F1 / Alt+F2\tdrives and SSH hosts\nAlt+Left / Alt+Right\tback / forward\nCtrl+R / Ctrl+H\trefresh / hidden files\nSpace\tmedia viewer (aiview)\n\nNothing is ever overwritten.";
     HWND before = GetFocus();
     MessageBoxW(app->window,text.c_str(),about ? L"About aicmd" : L"Keyboard shortcuts - F1",MB_OK|MB_ICONINFORMATION);
     if (before) SetFocus(before);
@@ -360,6 +361,7 @@ bool launch_media(int p) {
     if (!tab || !tab->snapshot || row <= 0 || static_cast<size_t>(row) > tab->snapshot->entries.size()) return false;
     const auto& focused = tab->snapshot->entries[row-1];
     if (focused.directory || av::kind(focused.name) == av::Kind::Unknown) return false;
+    if (tab->snapshot->readOnly) return false; // media inside archives: Space marks (playback from archives is not implemented)
     if (app->mediaProcess) {app->notice = L"A media viewer is already open for this commander. Close it before opening another folder."; return true;}
     {
         // The media viewer is optional; without it Space keeps its commander meaning (mark).
@@ -498,8 +500,10 @@ void open_item(int p) {
         c.action = Action::Navigate; c.path = file.parent_path(); c.focus = file.filename();
         run_command(c); return;
     }
-    c.action = e.directory ? Action::Navigate : v.snapshot->path.is_remote() ? Action::FileView : Action::FileEdit;
-    c.path = e.directory ? v.snapshot->path / e.name : e.name;
+    // Archives open like folders (Total Commander: Enter / Ctrl+PgDn). Archives inside archives are not opened.
+    bool into = e.directory || (archive_name(e.name) && !v.snapshot->readOnly);
+    c.action = into ? Action::Navigate : v.snapshot->path.is_remote() || v.snapshot->readOnly ? Action::FileView : Action::FileEdit;
+    c.path = into ? v.snapshot->path / e.name : e.name;
     run_command(c);
 }
 void go(int p) { capture(p); Command c; c.action = Action::Navigate; c.panel = p; c.path = text(app->panes[p].path); run_command(c); end_path(p); }
@@ -648,6 +652,7 @@ void render() {
         auto bar = L" " + shown(t->loading ? t->requested : t->path);
         if (t->search) { bar = L" Search " + wide(t->search->query().mask) + (t->search->query().text.empty() ? L"" : L" containing \"" + wide(t->search->query().text) + L"\"") + L" in " + shown(t->path); }
         if (t->loading) bar += L"  [loading]";
+        else if (t->snapshot && t->snapshot->readOnly) bar += L"  [archive, read-only]";
         bool active = p == app->core.state().activePanel;
         if (text(v.pathLabel) != bar) SetWindowTextW(v.pathLabel,bar.c_str());
         if (v.active != active) { v.active = active; InvalidateRect(v.pathLabel,nullptr,FALSE); InvalidateRect(v.list,nullptr,FALSE); }
@@ -804,6 +809,15 @@ bool key(MSG& msg,int testModifiers = -1) {
     if (alt && msg.wParam == VK_RIGHT) { action(Action::Forward,p); return true; }
     if (msg.wParam == VK_RETURN) { if (focus == v.path) { go(p); return true; } if (focus == v.list) { open_item(p); return true; } }
     if (msg.wParam == VK_BACK && focus == v.list) { action(Action::Parent,p); return true; }
+    if (ctrl && msg.wParam == VK_PRIOR && focus == v.list) { action(Action::Parent,p); return true; }
+    if (ctrl && msg.wParam == VK_NEXT && focus == v.list) {
+        int row = ListView_GetNextItem(v.list,-1,LVNI_FOCUSED);
+        if (v.snapshot && row > 0 && static_cast<size_t>(row) <= v.snapshot->entries.size()) {
+            const auto& e = v.snapshot->entries[row-1];
+            if (e.directory || archive_name(e.name)) open_item(p); else app->notice = L"Ctrl+PgDn opens folders and archives (ZIP, JAR, TAR, TGZ).";
+        }
+        return true;
+    }
     if (focus == v.list && (msg.wParam == VK_INSERT || msg.wParam == VK_SPACE)) {
         if (msg.wParam == VK_SPACE && !shift && !ctrl && !alt && launch_media(p)) return true;
         int row = ListView_GetNextItem(v.list,-1,LVNI_FOCUSED);
@@ -1021,6 +1035,17 @@ void smoke() {
     } else if (app->smokeStage == 16) {
         const Tab* t = current(1);
         check(t && !t->search && t->path == Location(app->smokeFixture/"dst") && t->focus == "renamed.txt");
+        std::error_code ec; fs::copy_file(fs::current_path()/"tests"/"fixtures"/"archives"/"sample.zip",app->smokeFixture/"dst"/"sample.zip",ec); check(!ec);
+        Command c; c.action = Action::Refresh; c.panel = 1; run_command(c);
+    } else if (app->smokeStage == 17) {
+        render(); focus_entry(1,"sample.zip"); press(VK_RETURN);
+    } else if (app->smokeStage == 18) {
+        const Tab* t = current(1);
+        check(t && t->path == Location(app->smokeFixture/"dst"/"sample.zip") && t->snapshot && t->snapshot->readOnly && t->snapshot->entries.size() == 7);
+        render(); SetFocus(app->panes[1].list); press(VK_BACK);
+    } else if (app->smokeStage == 19) {
+        const Tab* t = current(1);
+        check(t && t->path == Location(app->smokeFixture/"dst") && t->focus == "sample.zip");
         std::error_code ec; fs::remove_all(app->smokeFixture,ec);
         PostMessageW(app->window,WM_CLOSE,0,0);
     }
@@ -1177,7 +1202,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int show) {
         ShowWindow(hwnd,show); render(); SetFocus(app->panes[app->core.state().activePanel].list);
         MSG msg{};
         while (GetMessageW(&msg,nullptr,0,0) > 0) { if (!key(msg)) { TranslateMessage(&msg); DispatchMessageW(&msg); } }
-        if (!app->smokePath.empty()) { if (app->smokeStage < 17) app->smokeFailed = true; std::ofstream f(app->smokePath); f << (app->smokeFailed ? "FAIL" : "PASS") << " native GUI: compact full-width lists, tabs, parent, keyboard/mouse cursor and mark routes, full-row clicks, double-click navigation, persistence, F7/Shift+F6/F6/Shift+Delete file operations, Alt+F7 search and go-to-file (stages " << app->smokeStage << ")\n"; }
+        if (!app->smokePath.empty()) { if (app->smokeStage < 20) app->smokeFailed = true; std::ofstream f(app->smokePath); f << (app->smokeFailed ? "FAIL" : "PASS") << " native GUI: compact full-width lists, tabs, parent, keyboard/mouse cursor and mark routes, full-row clicks, double-click navigation, persistence, F7/Shift+F6/F6/Shift+Delete file operations, Alt+F7 search and go-to-file, ZIP enter/leave (stages " << app->smokeStage << ")\n"; }
         int result = app->smokeFailed ? 1 : 0;
         CloseHandle(app->stateLock); DeleteObject(app->font); DeleteObject(app->activePath); DeleteObject(app->inactivePath); ImageList_Destroy(app->icons); app.reset(); return result;
     } catch (const std::exception& e) { MessageBoxW(nullptr,wide(e.what()).c_str(),L"aicmd",MB_ICONERROR); return 1; }

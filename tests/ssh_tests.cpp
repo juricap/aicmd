@@ -92,6 +92,18 @@ int main(int argc,char** argv) {
             require(fails([&]{delete_location(base/"ops",true,cancel);}),"Remote trash is refused");
             size_t removed = 0; delete_location(base/"ops",false,cancel,[&]{++removed;});
             require(removed == 3 && provider->list(base/"ops",false,cancel,1<<20).error,"Remote recursive permanent delete");
+            // Archives stored on the server browse and extract over SFTP random access.
+            const fs::path fixtures = fs::u8path(AICMD_FIXTURES);
+            copy_location(fixtures/"sample.zip",base/"remote.zip",cancel); copy_location(fixtures/"sample.tar.gz",base/"remote.tgz",cancel);
+            auto zipListing = provider->list(base/"remote.zip"/"docs",false,cancel,1<<20);
+            require(!zipListing.error && zipListing.readOnly && zipListing.entries.size() == 1 && zipListing.entries[0].name == "guide.md","Remote ZIP browsing");
+            copy_location(base/"remote.zip"/"docs"/"guide.md",root/"remote-guide.md",cancel);
+            require(contents(root/"remote-guide.md") == "# Guide\n","Remote ZIP member extraction");
+            copy_location(base/"remote.tgz"/"last.txt",root/"remote-last.txt",cancel);
+            require(contents(root/"remote-last.txt") == "last","Remote tar.gz member extraction");
+            copy_location(fixtures/"sample.zip"/"readme.txt",base/"from-zip.txt",cancel);
+            copy_location(base/"from-zip.txt",root/"from-zip-back.txt",cancel);
+            require(contents(root/"from-zip-back.txt").size() == 340,"Local archive member uploads to SSH");
             auto finalListing = provider->list(base,false,cancel,32*1024*1024);
             require(!finalListing.error && std::none_of(finalListing.entries.begin(),finalListing.entries.end(),[](const Entry& e){return e.name == "queue-c.bin";}),"Cancelled SSH queued job leaves no destination");
         }

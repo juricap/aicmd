@@ -24,3 +24,4 @@ Development is tracked at https://github.com/juricap/aicmd on main.
 - [Media viewer design and delivery plan](docs/Media-viewer.md)
 - [aiview usage, clipboard and agent API](docs/Aiview.md)
 - [Search (Alt+F7) and its scheduling](docs/Search.md)
+- [Archives as folders](docs/Archives.md)
