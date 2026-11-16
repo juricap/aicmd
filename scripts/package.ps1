@@ -27,6 +27,11 @@ try {
         if ($built -ne $version) { throw "$exe reports version $built, expected $version" }
     }
     $notices = @("aicmd $version third-party notices", '', 'nlohmann/json 3.11.3 (MIT), used for session persistence:', '', (Get-Content third_party\nlohmann\LICENSE.MIT -Raw))
+    # 7z.dll (7-Zip, LGPL + unRAR restriction) is redistributed unmodified for 7z/RAR/CAB/ISO/TAR.XZ browsing.
+    if (-not (Test-Path build\7z.dll)) { & "$PSScriptRoot\setup-7zip.ps1" | Out-Host }
+    Copy-Item build\7z.dll $stage
+    Copy-Item third_party\7zip\License.txt (Join-Path $stage '7z-License.txt')
+    $notices += @('', '7-Zip 26.06 7z.dll (C) Igor Pavlov: GNU LGPL with the unRAR license restriction; BSD 3-clause for some code.', 'Unmodified binary from the official 7-Zip MSI; full license in 7z-License.txt; source code at https://www.7-zip.org/.', 'You may replace 7z.dll with any compatible build.')
     if ($IncludeMpv) {
         if (-not (Test-Path build\libmpv-2.dll)) { throw 'build\libmpv-2.dll missing; run scripts\setup-aiview.ps1' }
         Write-Warning 'Bundling libmpv: audit its GPL/LGPL obligations (see third_party\mpv\README.md) before publishing.'
@@ -52,6 +57,8 @@ Run aicmd.exe. No installation is required; the session is stored in
   Alt+F1/F2 drives and SSH hosts (from ~/.ssh/config, keys handled by OpenSSH)
 
 Existing files are never overwritten; conflicting items fail and are reported.
+Enter starts programs (.exe, .bat, .msi, shortcuts) and opens archives as read-only
+folders: ZIP/JAR, TAR/TGZ built in; 7Z, RAR, CAB, ISO, TAR.XZ, TAR.BZ2 via the bundled 7z.dll.
 $editor
 $media
 

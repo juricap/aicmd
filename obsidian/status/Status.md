@@ -91,3 +91,10 @@ Standalone and commander Space/mark/current-item/focus tests pass. Existing nati
 - Shared download page for aicmd, jptxt and mdview: https://whatamieatingtoday.com/app/tools/ . Source in `web/tools/`, nginx snippet `web/tools.nginx.conf` installed as `/etc/nginx/snippets/tools.conf` on host `hnp`. The live vhost is the regular file `/etc/nginx/sites-enabled/whatamieatingtoday.com` (not a symlink); backups in `/root/`.
 - mdview 0.3.0 released from `juricap/mdviewer` (main fast-forwarded, MIT license added).
 - Verified: all page links return 200; the package smoke test passed before upload.
+
+## 7z/RAR and launching (2026-11-16)
+
+- Enter / double-click starts programs, scripts, installers and shortcuts via ShellExecute (local, not inside archives). Verified by GUI smoke stages 22-23 (a .cmd writes a marker).
+- 7z, RAR4/RAR5, CAB, ISO, ARJ, LZH, WIM, TAR.XZ and TAR.BZ2 browse as read-only folders through runtime-loaded 7z.dll (own interface declarations, no 7-Zip source compiled in). Release zip bundles 7-Zip 26.06 7z.dll + license.
+- Verified: archive suite 71 checks with the bundled 26.06 DLL and with the installed 7-Zip 19.00 fallback (7z solid LZMA2, UTF-8 names, mtimes, folder extraction, encrypted member and encrypted headers refused, damaged 7z, RAR4/RAR5 from libarchive's test suite, TAR.XZ/BZ2 from Python encoders). Windows 7/7 suites, GUI smoke 24 stages; Linux 7/7 without warnings (7z formats report the missing-DLL error there).
+- Not verified: multi-volume archives, very large solid archives (each member extraction reopens and decompresses from the solid block start).

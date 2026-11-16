@@ -1,6 +1,7 @@
 #include "aicmd_version.h"
 #include "core/search.h"
 #include "fs/archive.h"
+#include "fs/sevenzip.h"
 #include "core/core.h"
 #include "host/state.h"
 #include "fs/ssh.h"
@@ -263,7 +264,7 @@ std::wstring search_status(const Tab& t) {
 void show_help(bool about) {
     std::wstring text = about
         ? L"aicmd " AICMD_VERSION_WSTRING L"\n\nCompact, keyboard-first two-panel file commander.\nLocal and SSH/SFTP browsing, viewing, copying, moving and deleting.\n\nSession: %LOCALAPPDATA%\\aicmd\\session.json"
-        : L"Tab\tswitch panel\nEnter / Backspace\topen / parent\nInsert, Shift+Space\tmark\nNum+ / Num- / Num*\tselect / unselect / invert\nCtrl+A\tmark all\n\nF3 / F4\tview / edit (jptxt)\nF5\tcopy to other panel\nF6\tmove to other panel\nShift+F6\trename\nF7\tnew folder\nF8 / Delete\tRecycle Bin\nShift+F8 / Shift+Delete\tdelete permanently\nEscape\tcancel current job (Shift: all)\nAlt+F7\tsearch (results in a new tab)\nEnter / Ctrl+PgDn\topen folder or archive (read-only)\nCtrl+PgUp\tparent\n\nCtrl+T / Ctrl+W\tnew / close tab\nCtrl+Tab\tnext tab\nCtrl+L\tedit path (ssh://alias/path)\nCtrl+D\tbookmarks\nAlt+F1 / Alt+F2\tdrives and SSH hosts\nAlt+Left / Alt+Right\tback / forward\nCtrl+R / Ctrl+H\trefresh / hidden files\nSpace\tmedia viewer (aiview)\n\nNothing is ever overwritten.";
+        : L"Tab\tswitch panel\nEnter / Backspace\topen (programs start) / parent\nInsert, Shift+Space\tmark\nNum+ / Num- / Num*\tselect / unselect / invert\nCtrl+A\tmark all\n\nF3 / F4\tview / edit (jptxt)\nF5\tcopy to other panel\nF6\tmove to other panel\nShift+F6\trename\nF7\tnew folder\nF8 / Delete\tRecycle Bin\nShift+F8 / Shift+Delete\tdelete permanently\nEscape\tcancel current job (Shift: all)\nAlt+F7\tsearch (results in a new tab)\nEnter / Ctrl+PgDn\topen folder or archive: ZIP, 7Z, RAR, TAR, ISO... (read-only)\nCtrl+PgUp\tparent\n\nCtrl+T / Ctrl+W\tnew / close tab\nCtrl+Tab\tnext tab\nCtrl+L\tedit path (ssh://alias/path)\nCtrl+D\tbookmarks\nAlt+F1 / Alt+F2\tdrives and SSH hosts\nAlt+Left / Alt+Right\tback / forward\nCtrl+R / Ctrl+H\trefresh / hidden files\nSpace\tmedia viewer (aiview)\n\nNothing is ever overwritten.";
     HWND before = GetFocus();
     MessageBoxW(app->window,text.c_str(),about ? L"About aicmd" : L"Keyboard shortcuts - F1",MB_OK|MB_ICONINFORMATION);
     if (before) SetFocus(before);
@@ -481,6 +482,18 @@ void action(Action a, int p = -1, bool flag = false) {
     }
     run_command(c);
 }
+// Programs, scripts, installers and shortcuts start on Enter / double-click (Total Commander).
+bool launchable(const fs::path& name) {
+    auto ext = name.extension().wstring();
+    for (auto& c : ext) c = static_cast<wchar_t>(towlower(c));
+    for (auto e : {L".exe",L".com",L".bat",L".cmd",L".msi",L".lnk",L".url",L".appref-ms",L".msc",L".cpl"}) if (ext == e) return true;
+    return false;
+}
+void launch(const fs::path& file) {
+    auto result = reinterpret_cast<INT_PTR>(ShellExecuteW(app->window,nullptr,file.c_str(),nullptr,file.parent_path().c_str(),SW_SHOWNORMAL));
+    app->notice = result > 32 ? L"Started " + file.filename().wstring() : L"Cannot start " + file.filename().wstring() + L" (error " + std::to_wstring(result) + L")";
+    render();
+}
 void open_item(int p) {
     capture(p); const auto& v = app->panes[p];
     int row = ListView_GetNextItem(v.list,-1,LVNI_FOCUSED);
@@ -500,6 +513,7 @@ void open_item(int p) {
         c.action = Action::Navigate; c.path = file.parent_path(); c.focus = file.filename();
         run_command(c); return;
     }
+    if (!e.directory && !v.snapshot->readOnly && !v.snapshot->path.is_remote() && launchable(e.name)) { launch(v.snapshot->path.local/e.name); return; }
     // Archives open like folders (Total Commander: Enter / Ctrl+PgDn). Archives inside archives are not opened.
     bool into = e.directory || (archive_name(e.name) && !v.snapshot->readOnly);
     c.action = into ? Action::Navigate : v.snapshot->path.is_remote() || v.snapshot->readOnly ? Action::FileView : Action::FileEdit;
@@ -814,7 +828,7 @@ bool key(MSG& msg,int testModifiers = -1) {
         int row = ListView_GetNextItem(v.list,-1,LVNI_FOCUSED);
         if (v.snapshot && row > 0 && static_cast<size_t>(row) <= v.snapshot->entries.size()) {
             const auto& e = v.snapshot->entries[row-1];
-            if (e.directory || archive_name(e.name)) open_item(p); else app->notice = L"Ctrl+PgDn opens folders and archives (ZIP, JAR, TAR, TGZ).";
+            if (e.directory || archive_name(e.name)) open_item(p); else app->notice = L"Ctrl+PgDn opens folders and archives (ZIP, 7Z, RAR, TAR, TGZ, ISO...).";
         }
         return true;
     }
@@ -1046,6 +1060,28 @@ void smoke() {
     } else if (app->smokeStage == 19) {
         const Tab* t = current(1);
         check(t && t->path == Location(app->smokeFixture/"dst") && t->focus == "sample.zip");
+        // Enter on a 7z enters it when 7z.dll is available (next to aicmd.exe or an installed 7-Zip).
+        std::error_code ec; fs::copy_file(fs::current_path()/"tests"/"fixtures"/"archives"/"sample.7z",app->smokeFixture/"dst"/"sample.7z",ec); check(!ec);
+        // Enter on a program starts it: a batch file that leaves a marker.
+        std::ofstream(app->smokeFixture/"dst"/"launch.cmd") << "@echo started> \"" << (app->smokeFixture/"dst"/"launched.txt").string() << "\"\r\n";
+        Command c; c.action = Action::Refresh; c.panel = 1; run_command(c);
+    } else if (app->smokeStage == 20) {
+        render(); focus_entry(1,"sample.7z"); press(VK_RETURN);
+    } else if (app->smokeStage == 21) {
+        const Tab* t = current(1);
+        if (sevenzip::library().empty()) check(t && t->path == Location(app->smokeFixture/"dst"));
+        else check(t && t->path == Location(app->smokeFixture/"dst"/"sample.7z") && t->snapshot && t->snapshot->readOnly && t->snapshot->entries.size() == 6);
+        render(); SetFocus(app->panes[1].list); press(VK_BACK);
+    } else if (app->smokeStage == 22) {
+        const Tab* t = current(1);
+        check(t && t->path == Location(app->smokeFixture/"dst"));
+        render(); focus_entry(1,"launch.cmd"); press(VK_RETURN);
+    } else if (app->smokeStage == 23) {
+        // The started program runs asynchronously; wait up to ~10 s for its marker.
+        if (!fs::exists(app->smokeFixture/"dst"/"launched.txt") && app->smokeTicks < 590) { static int waits = 0; if (++waits < 100) return; }
+        check(fs::exists(app->smokeFixture/"dst"/"launched.txt"));
+        const Tab* t = current(1);
+        check(t && t->path == Location(app->smokeFixture/"dst")); // launching does not navigate
         std::error_code ec; fs::remove_all(app->smokeFixture,ec);
         PostMessageW(app->window,WM_CLOSE,0,0);
     }
@@ -1202,7 +1238,7 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int show) {
         ShowWindow(hwnd,show); render(); SetFocus(app->panes[app->core.state().activePanel].list);
         MSG msg{};
         while (GetMessageW(&msg,nullptr,0,0) > 0) { if (!key(msg)) { TranslateMessage(&msg); DispatchMessageW(&msg); } }
-        if (!app->smokePath.empty()) { if (app->smokeStage < 20) app->smokeFailed = true; std::ofstream f(app->smokePath); f << (app->smokeFailed ? "FAIL" : "PASS") << " native GUI: compact full-width lists, tabs, parent, keyboard/mouse cursor and mark routes, full-row clicks, double-click navigation, persistence, F7/Shift+F6/F6/Shift+Delete file operations, Alt+F7 search and go-to-file, ZIP enter/leave (stages " << app->smokeStage << ")\n"; }
+        if (!app->smokePath.empty()) { if (app->smokeStage < 24) app->smokeFailed = true; std::ofstream f(app->smokePath); f << (app->smokeFailed ? "FAIL" : "PASS") << " native GUI: compact full-width lists, tabs, parent, keyboard/mouse cursor and mark routes, full-row clicks, double-click navigation, persistence, F7/Shift+F6/F6/Shift+Delete file operations, Alt+F7 search and go-to-file, ZIP and 7z enter/leave, Enter starts programs (stages " << app->smokeStage << ")\n"; }
         int result = app->smokeFailed ? 1 : 0;
         CloseHandle(app->stateLock); DeleteObject(app->font); DeleteObject(app->activePath); DeleteObject(app->inactivePath); ImageList_Destroy(app->icons); app.reset(); return result;
     } catch (const std::exception& e) { MessageBoxW(nullptr,wide(e.what()).c_str(),L"aicmd",MB_ICONERROR); return 1; }

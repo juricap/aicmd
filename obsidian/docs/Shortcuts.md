@@ -4,7 +4,7 @@
 |---|---|
 | Tab | Switch panel |
 | Up / Down / Home / End / Page Up / Page Down | Move focused row, retaining marks |
-| Enter | Enter directory or edit focused file in jptxt |
+| Enter / double-click | Enter directory or archive; start programs (.exe .com .bat .cmd .msi .lnk .url .msc .cpl) with Windows; other files open in jptxt |
 | Backspace | Parent directory |
 | Alt+Left / Alt+Right | Back / forward |
 | Insert | Toggle mark and advance |
@@ -25,7 +25,7 @@
 | Shift+F6 | Rename the cursor entry in place; the dialog preselects the name without its extension |
 | F7 | Create a folder in the current directory and place the cursor on it |
 | F8 / Delete | Move marked entries or cursor entry to the Recycle Bin (local fixed drives) |
-| Enter / Ctrl+PgDn on an archive | Open ZIP/JAR/TAR/TGZ as a read-only folder ([details](Archives.md)) |
+| Enter / Ctrl+PgDn on an archive | Open ZIP/JAR/TAR/TGZ, and 7Z/RAR/CAB/ISO/TAR.XZ/TAR.BZ2 via 7z.dll, as a read-only folder ([details](Archives.md)) |
 | Ctrl+PgUp | Parent folder (leaves an archive with the cursor on it) |
 | Alt+F7 | Search below a folder; results stream into a new tab, Enter goes to the file ([details](Search.md)) |
 | F1 | Keyboard shortcuts |

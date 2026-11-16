@@ -3,7 +3,7 @@
 Python's zipfile/tarfile/gzip act as an independent encoder for aicmd's own decoder.
 Run: python scripts/make-archive-fixtures.py
 """
-import gzip, io, struct, tarfile, time, zipfile, zlib
+import bz2, gzip, io, lzma, os, shutil, struct, subprocess, tarfile, tempfile, time, zipfile, zlib
 from pathlib import Path
 
 out = Path(__file__).resolve().parent.parent / 'tests' / 'fixtures' / 'archives'
@@ -89,4 +89,23 @@ for level, payload in ((0, b'stored block'), (1, b'abcabcabcabcabc fixed'), (9, 
 with open(out / 'deflate.bin', 'wb') as f:
     for payload, packed in vectors:
         f.write(struct.pack('<II', len(payload), len(packed)) + packed + struct.pack('<I', zlib.crc32(payload)))
+# TAR inside xz / bzip2 streams (read through 7z.dll), encoded by Python's lzma and bz2.
+(out / 'sample.tar.xz').write_bytes(lzma.compress(tarbytes, format=lzma.FORMAT_XZ))
+(out / 'sample.tar.bz2').write_bytes(bz2.compress(tarbytes, 9))
+
+# 7z archives need 7-Zip itself; set SEVENZIP to a 7z.exe (scripts/setup-7zip.ps1 extracts 26.06).
+# RAR fixtures (rar4.rar, rar5.rar) are libarchive test files; see tests/fixtures/archives/NOTICE.md.
+seven = os.environ.get('SEVENZIP')
+if seven:
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / 'src'
+        for rel, payload in (('readme.txt', b'hello from a 7z\n' * 20), ('docs/guide.md', b'# Guide\n'),
+                             ('日本語/名前.txt', '日本語'.encode()), ('empty.txt', b''), ('big.txt', text)):
+            f = src / rel; f.parent.mkdir(parents=True, exist_ok=True); f.write_bytes(payload)
+            os.utime(f, (EPOCH, EPOCH))
+        (src / 'emptydir').mkdir()
+        for name, extra in (('sample.7z', ['-ms=on', '-mx=9']), ('encrypted.7z', ['-psecret']), ('header-encrypted.7z', ['-psecret', '-mhe=on'])):
+            target = out / name
+            if target.exists(): target.unlink()
+            subprocess.run([seven, 'a', '-t7z', '-bd', '-y', str(target), '.'] + extra, cwd=src, check=True, stdout=subprocess.DEVNULL)
 print('fixtures in', out)

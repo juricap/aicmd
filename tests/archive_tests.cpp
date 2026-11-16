@@ -1,4 +1,6 @@
 #include "fs/archive.h"
+#include "fs/sevenzip.h"
+#include <algorithm>
 #include "fs/ssh.h"
 #include <chrono>
 #include <cstring>
@@ -78,6 +80,38 @@ int main() {
         write(root/"truncated.zip",contents(fixtures/"sample.zip").substr(0,700));
         require(static_cast<bool>(provider->list(root/"truncated.zip",false,cancel,1<<20).error),"Truncated ZIP is an error, not a crash");
         fs::create_directories(root/"folder.zip"/"inside"); require(names(root/"folder.zip") == std::set<std::string>({"inside/"}),"A folder named like an archive stays a folder");
+
+        // 7z, RAR, TAR.XZ and TAR.BZ2 through 7z.dll (next to the test, or an installed 7-Zip).
+        std::string why;
+        if (!sevenzip::library(&why).empty()) {
+            std::cout << "7z.dll: " << sevenzip::library() << "\n";
+            Location seven = fixtures/"sample.7z";
+            require(names(seven) == std::set<std::string>({"readme.txt","docs/",u8"日本語/","empty.txt","big.txt","emptydir/"}),"7z root listing");
+            require(provider->list(seven,false,cancel,1<<20).readOnly,"7z listings are read-only");
+            require(extract(seven/"readme.txt") == repeat("hello from a 7z\n",20),"7z member (solid LZMA2)");
+            require(extract(seven/"big.txt") == l1 && extract(seven/"empty.txt").empty(),"Large and empty 7z members");
+            require(extract(seven/fs::u8path(u8"日本語")/fs::u8path(u8"名前.txt")) == u8"日本語","7z UTF-8 member path");
+            copy_location(seven/"docs",root/"docs7",cancel); require(contents(root/"docs7"/"guide.md") == "# Guide\n","7z folder extraction");
+            auto modified = provider->list(seven,false,cancel,1<<20);
+            require(std::any_of(modified.entries.begin(),modified.entries.end(),[](const Entry& e){ return e.name == "readme.txt" && e.modified == 1715000000; }),"7z modification times");
+            require(fails([&]{ extract(Location(fixtures/"encrypted.7z")/"readme.txt"); }),"Encrypted 7z member is refused");
+            auto headers = provider->list(fixtures/"header-encrypted.7z",false,cancel,1<<20);
+            require(headers.error && headers.error.message.find("encrypted") != std::string::npos,"Header-encrypted 7z reports encryption");
+            require(names(fixtures/"rar4.rar") == std::set<std::string>({"test.txt","testlink","testdir/","testemptydir/"}),"RAR4 listing");
+            require(extract(Location(fixtures/"rar4.rar")/"testdir"/"test.txt") == "test text document\r\n","RAR4 member");
+            require(names(fixtures/"rar5.rar") == std::set<std::string>({"helloworld.txt"}) && extract(Location(fixtures/"rar5.rar")/"helloworld.txt") == "hello libarchive test suite!\n","RAR5 member");
+            for (auto name : {"sample.tar.xz","sample.tar.bz2"}) {
+                Location tar = fixtures/name;
+                require(names(tar) == std::set<std::string>({"dir/","long/",u8"über/","big.txt","last.txt"}),"TAR.XZ/BZ2 root listing");
+                require(extract(tar/"last.txt") == "last" && extract(tar/"big.txt") == l1.substr(0,100000),"TAR.XZ/BZ2 member data");
+            }
+            auto broken = contents(fixtures/"sample.7z"); broken[broken.size()/2] ^= 0x5A; write(root/"broken.7z",broken);
+            require(fails([&]{ extract(Location(root/"broken.7z")/"big.txt"); }) || static_cast<bool>(provider->list(root/"broken.7z",false,cancel,1<<20).error),"Damaged 7z is an error, not a crash");
+        } else {
+            std::cout << "7z.dll not available (" << why << "); checking the error path only\n";
+            auto l = provider->list(fixtures/"sample.7z",false,cancel,1<<20);
+            require(l.error && l.error.message.find("7z.dll") != std::string::npos,"Missing 7z.dll gives a clear error");
+        }
 
         // Core: enter, parent focus, read-only refusals, staged view.
         fs::create_directories(root/"plain"); fs::copy_file(fixtures/"sample.zip",root/"plain"/"sample.zip");

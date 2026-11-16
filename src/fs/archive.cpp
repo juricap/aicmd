@@ -1,5 +1,6 @@
 #include "archive.h"
 #include "read_source.h"
+#include "sevenzip.h"
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -204,7 +205,7 @@ void gunzip_stream(Bytes& in,const std::function<void(const uint8_t*,size_t)>& s
 }
 
 // ---------------------------------------------------------------- archive index
-enum class Kind { Zip, Tar, TarGz };
+enum class Kind { Zip, Tar, TarGz, Seven /* 7z.dll archive */, TarSeven /* TAR inside an xz/bzip2 stream via 7z.dll */ };
 struct Member {
     std::string path; Entry entry;
     uint64_t offset = 0, packed = 0; int method = 0; uint32_t crc = 0;
@@ -451,6 +452,28 @@ Index read_targz(ReadSource& source,const Cancel& cancel) {
     finish(index); return index;
 }
 
+// 7z, RAR, CAB, ISO... through 7z.dll; Member::offset holds the 7-Zip item index.
+Index read_seven(ReadSource& source,const std::string& name,const Cancel& cancel) {
+    Index index; index.kind = Kind::Seven;
+    for (auto& item : sevenzip::list(source,name,cancel)) {
+        bool slash = false;
+        auto path = clean(item.path,slash);
+        bool directory = item.directory || slash;
+        Member m; m.path = path; m.offset = item.index; m.encrypted = item.encrypted;
+        m.entry.name = fs::u8path(path.substr(path.rfind('/') == std::string::npos ? 0 : path.rfind('/')+1));
+        m.entry.directory = directory; if (item.modified) m.entry.modified = item.modified;
+        if (!directory) m.entry.size = item.size;
+        add(index,std::move(m));
+    }
+    finish(index); return index;
+}
+// TAR.XZ / TAR.BZ2: 7z.dll decompresses the single stream (item 0), our TAR walker indexes it.
+Index read_tar_seven(ReadSource& source,const std::string& name,const Cancel& cancel) {
+    Index index; index.kind = Kind::TarSeven; TarStream stream(index);
+    try { sevenzip::extract(source,name,0,cancel,[&](const uint8_t* p,size_t n){ stream.feed(p,n); }); } catch (const Stop&) {}
+    finish(index); return index;
+}
+
 // ---------------------------------------------------------------- cache
 struct Cached { std::string key; uint64_t size; int64_t modified; std::shared_ptr<const Index> index; };
 std::mutex cacheMutex;
@@ -470,7 +493,10 @@ std::shared_ptr<const Index> load(const Location& container,const ArchiveStat& s
     auto header = source->size() >= 4 ? read_exact(*source,0,4) : std::string();
     auto name = lower(container.filename().u8string());
     std::shared_ptr<Index> index;
-    if (header.size() == 4 && static_cast<uint8_t>(header[0]) == 0x1f && static_cast<uint8_t>(header[1]) == 0x8b) index = std::make_shared<Index>(read_targz(*source,cancel));
+    auto seven = sevenzip::mode(name);
+    if (seven == sevenzip::Mode::Archive) index = std::make_shared<Index>(read_seven(*source,name,cancel));
+    else if (seven == sevenzip::Mode::TarStream) index = std::make_shared<Index>(read_tar_seven(*source,name,cancel));
+    else if (header.size() == 4 && static_cast<uint8_t>(header[0]) == 0x1f && static_cast<uint8_t>(header[1]) == 0x8b) index = std::make_shared<Index>(read_targz(*source,cancel));
     else if (ends(name,".tar")) index = std::make_shared<Index>(read_tar(*source,cancel));
     else index = std::make_shared<Index>(read_zip(*source,cancel));
     std::lock_guard<std::mutex> lock(cacheMutex);
@@ -502,7 +528,7 @@ std::string gunzip(const std::string& data) {
 bool archive_name(const fs::path& name) {
     auto s = lower(name.u8string());
     for (auto suffix : {".zip",".jar",".war",".ear",".apk",".whl",".nupkg",".tar",".tgz",".tar.gz"}) if (ends(s,suffix)) return true;
-    return false;
+    return sevenzip::mode(s) != sevenzip::Mode::None;
 }
 std::optional<ArchivePath> locate_archive(const Location& location,const ArchiveStatFn& stat) {
     std::vector<std::string> parts; Location prefix;
@@ -568,6 +594,18 @@ void archive_extract(const ArchivePath& path,const ArchiveStat& container,const 
             if (m.packed != size) throw std::runtime_error("Stored ZIP member size mismatch");
             for (uint64_t at = 0; at < size;) { if (cancel && cancel->load()) throw std::runtime_error("Cancelled"); auto part = source->read_at(data+at,static_cast<size_t>(std::min<uint64_t>(512*1024,size-at))); if (part.empty()) throw std::runtime_error("Archive is truncated"); checked(reinterpret_cast<const uint8_t*>(part.data()),part.size()); at += part.size(); }
         } else { Bytes in(pull_from(*source,data,m.packed,cancel)); Inflater(in,checked).run(); }
+    } else if (index->kind == Kind::Seven) {
+        if (m.encrypted) throw std::runtime_error("Encrypted archive members are not supported");
+        sevenzip::extract(*source,lower(path.container.filename().u8string()),static_cast<uint32_t>(m.offset),cancel,checked);
+    } else if (index->kind == Kind::TarSeven) {
+        Index scratch; TarStream stream(scratch);
+        uint64_t begin = m.offset, end = m.offset+size;
+        stream.data = [&](uint64_t at,const uint8_t* p,size_t n) {
+            uint64_t from = std::max(at,begin), to = std::min<uint64_t>(at+n,end);
+            if (from < to) checked(p+(from-at),static_cast<size_t>(to-from));
+            if (at+n >= end) throw Stop{};
+        };
+        if (size) { try { sevenzip::extract(*source,lower(path.container.filename().u8string()),0,cancel,[&](const uint8_t* p,size_t n){ stream.feed(p,n); }); } catch (const Stop&) {} }
     } else if (index->kind == Kind::Tar) {
         for (uint64_t at = 0; at < size;) { if (cancel && cancel->load()) throw std::runtime_error("Cancelled"); auto part = source->read_at(m.offset+at,static_cast<size_t>(std::min<uint64_t>(512*1024,size-at))); if (part.empty()) throw std::runtime_error("Archive is truncated"); checked(reinterpret_cast<const uint8_t*>(part.data()),part.size()); at += part.size(); }
     } else {

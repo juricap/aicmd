@@ -4,7 +4,7 @@ A minimal native, two-panel file manager following the compact, keyboard-first T
 
 **Download:** [whatamieatingtoday.com/app/tools](https://whatamieatingtoday.com/app/tools/) (aicmd, jptxt, mdview) · [releases](https://github.com/juricap/aicmd/releases) · MIT license.
 
-**v0.2.0:** Windows browsing, tabs, SSH/SFTP, F3 viewing, copy/move/rename/delete (never overwrites), Alt+F7 search, ZIP/TAR browsing, shared core, CLI, and persistence implemented. SSH terminal and model transports are planned on the same core.
+**v0.3.0:** Windows browsing, tabs, SSH/SFTP, F3 viewing, copy/move/rename/delete (never overwrites), Alt+F7 search, ZIP/TAR browsing plus 7z/RAR/CAB/ISO/TAR.XZ via 7-Zip's 7z.dll (bundled in releases), Enter starts programs, shared core, CLI, and persistence implemented. SSH terminal and model transports are planned on the same core.
 
 - [Vault home](obsidian/Home.md)
 - [Design](obsidian/docs/Design.md), [reference study](obsidian/docs/Reference-study.md), [shortcuts](obsidian/docs/Shortcuts.md)
@@ -28,7 +28,7 @@ Requires Visual Studio 2022 C++ tools; `build.bat` configures Release, builds, a
 
 Validation: `scripts\test-gui.ps1`, `scripts\benchmark.ps1`, `scripts\test-linux.ps1`. Windows and Linux pass the core, SSH/copy, media, copy-queue and file-operation suites. Details and limitations are in [status](obsidian/status/Status.md).
 
-Two full-width lists with compact tabs, path bars, and columns. Enter/Backspace browse; Tab switches panel; Ctrl+T/W creates/closes tabs; Ctrl+L edits the path; Insert/Shift+Space marks entries; Space opens media (marks other entries); F3/F4 view/edit in jptxt; F5 copy, F6 move, Shift+F6 rename, F7 new folder, F8 Recycle Bin, Shift+F8 permanent delete. Enter opens ZIP/JAR/TAR/TGZ archives as read-only folders (F5 extracts). Alt+F7 searches (results stream into a tab; Enter goes to the file). Nothing is ever overwritten. Full list: [shortcuts](obsidian/docs/Shortcuts.md).
+Two full-width lists with compact tabs, path bars, and columns. Enter/Backspace browse (Enter starts programs and opens archives); Tab switches panel; Ctrl+T/W creates/closes tabs; Ctrl+L edits the path; Insert/Shift+Space marks entries; Space opens media (marks other entries); F3/F4 view/edit in jptxt; F5 copy, F6 move, Shift+F6 rename, F7 new folder, F8 Recycle Bin, Shift+F8 permanent delete. Enter opens ZIP/JAR/TAR/TGZ archives, and 7Z/RAR/CAB/ISO/TAR.XZ/TAR.BZ2 via 7z.dll, as read-only folders (F5 extracts). Alt+F7 searches (results stream into a tab; Enter goes to the file). Nothing is ever overwritten. Full list: [shortcuts](obsidian/docs/Shortcuts.md).
 
 Session: `%LOCALAPPDATA%\aicmd\session.json`. Use `--session <file>` for an independent window. Set `AICMD_EDITOR` or `--editor <jptxt.exe>` if jptxt is not found automatically.
 
