@@ -44,17 +44,18 @@
   <p>Three small tools that work together. All are native C++ with no Electron, browser engine or runtime to install, and all are free under the MIT license. Early versions; feedback welcome on GitHub.</p>
 
   <section id="aicmd">
-    <div class="head"><h2>aicmd</h2><span class="ver">v0.2.0 · file commander · Windows</span></div>
+    <div class="head"><h2>aicmd</h2><span class="ver">v0.3.0 · file commander · Windows</span></div>
     <p>A keyboard-first two-panel file manager in the style of Total Commander and Midnight Commander.</p>
     <ul>
       <li>Local folders and SSH/SFTP servers in the same panels, with tabs</li>
       <li>Copy, move, rename, new folder and Recycle Bin delete. Existing files are never overwritten</li>
       <li>Alt+F7 search that streams results while it walks huge trees</li>
-      <li>ZIP, JAR, TAR and TAR.GZ archives open like folders (read-only)</li>
+      <li>ZIP, 7z, RAR, TAR, TAR.GZ/XZ/BZ2, CAB and ISO archives open like folders with Enter (read-only; 7-Zip's 7z.dll is included)</li>
+      <li>Enter starts programs, installers and shortcuts</li>
       <li>F3/F4 open files in jptxt; Space plays media with the built-in aiview player when libmpv is present</li>
     </ul>
     <div class="row">
-      <a class="btn main" href="https://github.com/juricap/aicmd/releases/download/v0.2.0/aicmd-0.2.0-win-x64.zip">Download for Windows x64 (zip)</a>
+      <a class="btn main" href="https://github.com/juricap/aicmd/releases/download/v0.3.0/aicmd-0.3.0-win-x64.zip">Download for Windows x64 (zip)</a>
       <a class="btn" href="https://github.com/juricap/aicmd">Source</a>
     </div>
     <p class="dim">Portable: unzip anywhere and run <code>aicmd.exe</code>. Not code-signed yet, so Windows SmartScreen may warn on first start. Install jptxt (below) for F3/F4; aicmd finds it automatically.</p>
