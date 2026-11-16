@@ -2,7 +2,9 @@
 
 A minimal native, two-panel file manager following the compact, keyboard-first Total Commander / Midnight Commander workflow. C++17 and native APIs, following `../jptxt`.
 
-**v0.2.0:** Windows browsing, tabs, SSH/SFTP, F3 viewing, F5 copying, shared core, CLI, and persistence implemented. SSH terminal and model transports are planned on the same core.
+**Download:** [whatamieatingtoday.com/app/tools](https://whatamieatingtoday.com/app/tools/) (aicmd, jptxt, mdview) · [releases](https://github.com/juricap/aicmd/releases) · MIT license.
+
+**v0.2.0:** Windows browsing, tabs, SSH/SFTP, F3 viewing, copy/move/rename/delete (never overwrites), Alt+F7 search, ZIP/TAR browsing, shared core, CLI, and persistence implemented. SSH terminal and model transports are planned on the same core.
 
 - [Vault home](obsidian/Home.md)
 - [Design](obsidian/docs/Design.md), [reference study](obsidian/docs/Reference-study.md), [shortcuts](obsidian/docs/Shortcuts.md)
@@ -10,8 +12,7 @@ A minimal native, two-panel file manager following the compact, keyboard-first T
 
 ## Release package
 
-`scripts\package.ps1` builds, tests and writes a portable zip to `artifacts
-elease\` (add `-IncludeMpv` / `-IncludeJptxt` to bundle those separately licensed components). Without jptxt, F3/F4 use the associated Windows application; without libmpv, Space marks entries.
+`scripts\package.ps1` builds, tests and writes a portable zip to `artifacts\release\` (add `-IncludeMpv` / `-IncludeJptxt` to bundle those separately licensed components). Without jptxt, F3/F4 use the associated Windows application; without libmpv, Space marks entries.
 
 ## Build and run
 

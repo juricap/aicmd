@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Native desktop tools</title>
+<meta name="description" content="aicmd file commander, jptxt notepad and mdview Markdown viewer: small native tools, no Electron, no runtime to install.">
+<link rel="canonical" href="https://whatamieatingtoday.com/app/tools/">
+<link rel="icon" href="aicmd.ico">
+<style>
+  :root {
+    --bg: #1e1e1e; --fg: #d4d4d4; --dim: #858585; --acc: #007acc;
+    --panel: #252526; --line: #3e3e42; --code: #111;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.5 ui-sans-serif, system-ui, sans-serif;
+    max-width: 44rem; margin-inline: auto; padding: 2.5rem 16px 4rem;
+  }
+  h1 { font-size: 1.75rem; font-weight: 650; letter-spacing: -.03em; margin: 0 0 .35rem; }
+  h2 { font-size: 1.3rem; letter-spacing: -.02em; margin: 0; }
+  h3 { font-size: .95rem; margin: 1.2rem 0 .4rem; }
+  .tag { color: var(--acc); font-size: .8rem; letter-spacing: .08em; text-transform: uppercase; }
+  .dim { color: var(--dim); }
+  a { color: var(--acc); }
+  code, pre { font-family: ui-monospace, Consolas, monospace; font-size: .85rem; }
+  pre { background: var(--code); border: 1px solid #333; border-radius: 8px; padding: .8rem 1rem; overflow-x: auto; margin: .4rem 0; }
+  ul { padding-left: 1.1rem; margin: .4rem 0; }
+  li { margin: .15rem 0; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 1.25rem 1.25rem 1rem; margin-top: 1.5rem; }
+  .head { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
+  .ver { color: var(--dim); font-size: .85rem; }
+  .row { display: flex; gap: .6rem; flex-wrap: wrap; margin: .8rem 0 .2rem; }
+  .btn { display: inline-block; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: .45rem .8rem; text-decoration: none; font-size: .85rem; }
+  .btn:hover { border-color: var(--acc); }
+  .btn.main { border-color: var(--acc); }
+  footer { margin-top: 3rem; color: var(--dim); font-size: .85rem; }
+</style>
+</head>
+<body>
+  <div class="tag">native desktop tools</div>
+  <h1>aicmd · jptxt · mdview</h1>
+  <p>Three small tools that work together. All are native C++ with no Electron, browser engine or runtime to install, and all are free under the MIT license. Early versions; feedback welcome on GitHub.</p>
+
+  <section id="aicmd">
+    <div class="head"><h2>aicmd</h2><span class="ver">v0.2.0 · file commander · Windows</span></div>
+    <p>A keyboard-first two-panel file manager in the style of Total Commander and Midnight Commander.</p>
+    <ul>
+      <li>Local folders and SSH/SFTP servers in the same panels, with tabs</li>
+      <li>Copy, move, rename, new folder and Recycle Bin delete. Existing files are never overwritten</li>
+      <li>Alt+F7 search that streams results while it walks huge trees</li>
+      <li>ZIP, JAR, TAR and TAR.GZ archives open like folders (read-only)</li>
+      <li>F3/F4 open files in jptxt; Space plays media with the built-in aiview player when libmpv is present</li>
+    </ul>
+    <div class="row">
+      <a class="btn main" href="https://github.com/juricap/aicmd/releases/download/v0.2.0/aicmd-0.2.0-win-x64.zip">Download for Windows x64 (zip)</a>
+      <a class="btn" href="https://github.com/juricap/aicmd">Source</a>
+    </div>
+    <p class="dim">Portable: unzip anywhere and run <code>aicmd.exe</code>. Not code-signed yet, so Windows SmartScreen may warn on first start. Install jptxt (below) for F3/F4; aicmd finds it automatically.</p>
+  </section>
+
+  <section id="jptxt">
+    <div class="head"><h2>jptxt</h2><span class="ver">notepad · Windows, macOS, Linux</span></div>
+    <p>A super-fast notepad: tabs, syntax highlighting, regex search and a hex view for binaries. Opens 100&nbsp;MB+ files in tens of milliseconds.</p>
+    <h3>Windows (PowerShell)</h3>
+    <pre>irm https://whatamieatingtoday.com/app/jptxt/install.ps1 | iex</pre>
+    <h3>macOS / Linux</h3>
+    <pre>curl -fsSL https://whatamieatingtoday.com/app/jptxt/install.sh | bash</pre>
+    <div class="row">
+      <a class="btn" href="https://github.com/juricap/jptxt/releases/latest/download/jptxt-windows-x64.exe">Windows x64</a>
+      <a class="btn" href="https://github.com/juricap/jptxt/releases/latest/download/jptxt-macos-arm64">macOS Apple Silicon</a>
+      <a class="btn" href="https://github.com/juricap/jptxt/releases/latest/download/jptxt-linux-x64">Linux x64</a>
+      <a class="btn" href="../jptxt/">More about jptxt</a>
+    </div>
+  </section>
+
+  <section id="mdview">
+    <div class="head"><h2>mdview</h2><span class="ver">v0.3.0 · Markdown viewer · Windows</span></div>
+    <p>A fast Markdown viewer with GitHub-style tables, task lists and code blocks. It draws the page itself, so it needs no WebView2 or browser, and it opens a 20&nbsp;MB file in about a tenth of a second.</p>
+    <ul>
+      <li><code>mdview.exe</code>: a standalone viewer</li>
+      <li><code>mdview.wlx64</code>: a lister plugin for Total Commander and Double Commander. Open the zip in Total Commander and it offers to install itself</li>
+    </ul>
+    <div class="row">
+      <a class="btn main" href="https://github.com/juricap/mdviewer/releases/download/v0.3.0/mdview-0.3.0.zip">Download for Windows x64 (zip)</a>
+      <a class="btn" href="https://github.com/juricap/mdviewer">Source</a>
+    </div>
+  </section>
+
+  <footer>
+    Source and releases on GitHub: <a href="https://github.com/juricap/aicmd">aicmd</a> ·
+    <a href="https://github.com/juricap/jptxt">jptxt</a> ·
+    <a href="https://github.com/juricap/mdviewer">mdviewer</a>
+  </footer>
+</body>
+</html>
