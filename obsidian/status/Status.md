@@ -84,3 +84,10 @@ Ctrl+C/Ctrl+Insert copy full-resolution decoded pixels to Windows clipboard (alp
 Verified: Windows build and 58 core + 14 SSH/copy + 22 media-controller/read-at checks; Linux same suites through `ssh ai` at `/data/devel/aicmd-check-media-20260922`. Native media suite passes **28 checks**, including JPEG/PNG, H.264/AAC with D3D11 decode, HEVC, WAV seek state, CFR/VFR stepping against FFprobe timestamps, EXIF rotation, transparent-image copying, MCP image content and large PNG pipe responses. Remote tail-index MP4 playback/seek/reverse step fetched about 1.8 MB from a roughly 130 MB sparse fixture. Captured frame/PNG pixels were inspected. This is functional LAN validation, not an internet-streaming benchmark.
 
 Standalone and commander Space/mark/current-item/focus tests pass. Existing native GUI, local F3/jptxt and SSH F3/F5/keyboard-return regression scripts also pass. Portable GUI shells, binary redistribution/license manifest, 4K/HDR fidelity and long-run/WAN interruption hardening remain open. Native Windows rendering uses libmpv's `wid`/D3D11 adapter; initial commander attachment uses bounded temporary snapshots and one viewer at a time. Details, reproducible commands, limits and tool contracts: [aiview](../docs/Aiview.md).
+
+## Published (2026-11-16)
+
+- GitHub `juricap/aicmd` made public; release **v0.2.0** with `aicmd-0.2.0-win-x64.zip` (aicmd, aicmd-cli, aiview, aiview-tool, LICENSE, notices; no libmpv, no jptxt). MIT license added.
+- Shared download page for aicmd, jptxt and mdview: https://whatamieatingtoday.com/app/tools/ . Source in `web/tools/`, nginx snippet `web/tools.nginx.conf` installed as `/etc/nginx/snippets/tools.conf` on host `hnp`. The live vhost is the regular file `/etc/nginx/sites-enabled/whatamieatingtoday.com` (not a symlink); backups in `/root/`.
+- mdview 0.3.0 released from `juricap/mdviewer` (main fast-forwarded, MIT license added).
+- Verified: all page links return 200; the package smoke test passed before upload.
